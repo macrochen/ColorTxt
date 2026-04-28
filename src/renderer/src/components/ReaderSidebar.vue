@@ -433,6 +433,7 @@ defineExpose({
       />
       <HighlightListPanel
         v-show="activeTab === 'highlights'"
+        :current-file-path="currentFilePath"
         :highlight-terms="highlightTerms"
         :highlight-preview-bg="highlightPreviewBg"
         :monaco-font-family="monacoFontFamily"

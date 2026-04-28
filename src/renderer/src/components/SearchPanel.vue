@@ -130,7 +130,7 @@ function buildSegmentsByRanges(text: string, ranges: SearchRange[]) {
           type="search"
           class="searchInput"
           :value="props.query"
-          placeholder="搜索当前文件"
+          placeholder="搜索当前文件…"
           @input="emit('update:query', ($event.target as HTMLInputElement).value)"
         />
         <div class="searchOptionGroup" role="group" aria-label="搜索选项">

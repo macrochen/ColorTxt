@@ -3,11 +3,13 @@ import { icons } from "../icons";
 
 withDefaults(
   defineProps<{
+    currentFilePath: string | null;
     highlightTerms: Array<{ text: string; color: string; colorIndex: number }>;
     highlightPreviewBg?: string;
     monacoFontFamily: string;
   }>(),
   {
+    currentFilePath: null,
     highlightTerms: () => [],
     highlightPreviewBg: "var(--reader-bg, var(--bg))",
   },
@@ -30,7 +32,7 @@ function onRemoveHighlightTermClick(ev: MouseEvent, text: string) {
   <div class="highlightPanelWrap">
     <div class="highlightPanelBody">
       <div v-if="highlightTerms.length === 0" class="highlightEmpty">
-        当前文件暂无高亮词
+        {{ currentFilePath ? "当前文件暂无高亮词" : "未打开文件" }}
       </div>
       <div v-else class="highlightList">
         <div
