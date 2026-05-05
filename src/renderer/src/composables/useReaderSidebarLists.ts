@@ -45,7 +45,7 @@ type SidebarBookmarkItem = {
 };
 
 export type ReaderSidebarListProps = Readonly<{
-  activeTab: "files" | "chapters" | "bookmarks" | "highlights" | "search";
+  activeTab: import("../constants/readerSidebarTab").ReaderSidebarTab;
   chapters: Chapter[];
   /** 原始文件列表（与 `App` 中 `txtFiles` 同源）；项上可带 `category`；进度等与 `metaProgressByPathKey` / `fileMetaRecords` 合并 */
   files: TxtFileItem[];

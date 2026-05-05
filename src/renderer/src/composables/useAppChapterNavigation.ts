@@ -42,7 +42,7 @@ export function useAppChapterNavigation(deps: {
   chapterMinCharCount: Ref<number>;
   chapterRuleErrorText: Ref<string>;
   showChapterRulePanel: Ref<boolean>;
-  sidebarTab: Ref<"files" | "chapters" | "bookmarks" | "highlights" | "search">;
+  sidebarTab: Ref<import("../constants/readerSidebarTab").ReaderSidebarTab>;
   persistSettings: () => void;
   openFilePath: (
     filePath: string,

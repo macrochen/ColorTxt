@@ -8,6 +8,7 @@ import {
   type ComponentPublicInstance,
 } from "vue";
 import type { ChapterMatchRule } from "../chapter";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
 import { bookmarkNoteInputRefKey } from "../injectionKeys";
 import type { FileBookmarkItem } from "../stores/fileMetaStore";
 import AboutPanel from "./AboutPanel.vue";
@@ -51,6 +52,9 @@ const props = defineProps<{
   highlightColorsLight: string[];
   highlightColorsDark: string[];
   ebookConvertOutputDir: string;
+  aiSkillsEnabled: Record<string, boolean>;
+  aiSkillOverrides: Record<string, AiSkillUserOverride>;
+  aiCustomSkills: AiCustomSkill[];
 }>();
 
 const emit = defineEmits<{
@@ -170,6 +174,9 @@ onBeforeUnmount(() => {
     :monaco-custom-highlight="monacoCustomHighlight"
     :txtr-delimited-match-cross-line="txtrDelimitedMatchCrossLine"
     :ebook-convert-output-dir="ebookConvertOutputDir"
+    :ai-skills-enabled="aiSkillsEnabled"
+    :ai-skill-overrides="aiSkillOverrides"
+    :ai-custom-skills="aiCustomSkills"
     @apply="emit('applySettings', $event)"
   />
   <ChapterRulePanel

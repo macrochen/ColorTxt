@@ -64,9 +64,6 @@ function commit(e: Event) {
   flex-shrink: 0;
   padding: 6px 10px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }

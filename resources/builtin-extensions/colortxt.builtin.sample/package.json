@@ -1,0 +1,26 @@
+{
+  "name": "colortxt.builtin.sample",
+  "displayName": "示例内置扩展",
+  "description": "演示扩展事件与 API（内置）",
+  "version": "1.0.0",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sampleSidebar",
+          "title": "示例",
+          "icon": "icons/sample.svg"
+        }
+      ]
+    },
+    "views": {
+      "sampleSidebar": [
+        {
+          "id": "colortxt.builtin.sample.panel",
+          "name": "示例面板",
+          "entry": "panel.html"
+        }
+      ]
+    }
+  }
+}

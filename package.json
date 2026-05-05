@@ -13,14 +13,21 @@
     "preview": "electron-vite preview",
     "typecheck": "vue-tsc --noEmit",
     "lint": "echo \"(no lint configured)\"",
-    "release": "electron-vite build && electron-builder --publish always"
+    "release": "electron-vite build && electron-builder --publish always",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
     "electron-updater": "^6.8.3",
     "font-list": "^2.0.2",
-    "iconv-lite": "^0.7.2"
+    "iconv-lite": "^0.7.2",
+    "jszip": "^3.10.1",
+    "marked": "^14.1.3",
+    "sqlite-vec": "^0.1.6"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.10",
     "@types/pako": "^2.0.4",
     "@vitejs/plugin-vue": "^5.2.3",
@@ -28,7 +35,6 @@
     "electron-builder": "^26.0.12",
     "electron-vite": "^3.0.0",
     "jschardet": "^3.1.4",
-    "jszip": "^3.10.1",
     "monaco-editor": "^0.55.1",
     "pako": "^2.1.0",
     "pdfjs-dist": "^5.6.205",
@@ -45,6 +51,11 @@
       "output": "release"
     },
     "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/sqlite-vec/**",
+      "**/node_modules/sqlite-vec-*/**"
+    ],
     "extraResources": [
       {
         "from": "resources/icon.png",
@@ -53,6 +64,10 @@
       {
         "from": "resources/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "resources/builtin-extensions",
+        "to": "builtin-extensions"
       }
     ],
     "files": [

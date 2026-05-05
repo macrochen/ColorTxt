@@ -4,6 +4,8 @@
   --panel: #f3f3f3;
   --border: #d4d4d4;
   --fg: #333333;
+  /** 可与 --fg 区分用于图标等；默认等同前景色 */
+  --fgj: var(--fg);
   --muted: #6b6b6b;
   --secondary: #909399;
   --accent: #409eff;
@@ -214,42 +216,47 @@ body,
 .btn.primary {
   background: var(--accent);
   color: white;
-  border: none;
+  border-color: var(--accent);
 }
 .btn.primary:hover {
   background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 .btn.success {
   background: var(--success);
   color: white;
-  border: none;
+  border-color: var(--success);
 }
 .btn.success:hover {
   background: var(--success-hover);
+  border-color: var(--success-hover);
 }
 .btn.info {
   background: var(--info);
   color: white;
-  border: none;
+  border-color: var(--info);
 }
 .btn.info:hover {
   background: var(--info-hover);
+  border-color: var(--info-hover);
 }
 .btn.warning {
   background: var(--warning);
   color: white;
-  border: none;
+  border-color: var(--warning);
 }
 .btn.warning:hover {
   background: var(--warning-hover);
+  border-color: var(--warning-hover);
 }
 .btn.danger {
   background: var(--danger);
   color: white;
-  border: none;
+  border-color: var(--danger);
 }
 .btn.danger:hover {
   background: var(--danger-hover);
+  border-color: var(--danger-hover);
 }
 
 button {
@@ -400,7 +407,7 @@ textarea {
   transition: border-color 0.2s;
 }
 
-input:is([type="text"], [type="search"]),
+input:is([type="text"], [type="search"], [type="number"], [type="password"]),
 textarea {
   background: var(--input-bg);
   color: var(--fg);
@@ -409,7 +416,7 @@ textarea {
   line-height: 1.4;
 }
 
-input:is([type="text"], [type="search"]) {
+input:is([type="text"], [type="search"], [type="number"], [type="password"]) {
   padding: 6px 8px;
   border-radius: 4px;
 }
@@ -418,12 +425,22 @@ textarea {
   border-radius: 6px;
 }
 
-input:is([type="text"], [type="search"])::placeholder,
+input:is(
+    [type="text"],
+    [type="search"],
+    [type="number"],
+    [type="password"]
+  )::placeholder,
 textarea::placeholder {
   color: var(--secondary);
 }
 
-input:is([type="text"], [type="search"]):focus,
+input:is(
+    [type="text"],
+    [type="search"],
+    [type="number"],
+    [type="password"]
+  ):focus,
 textarea:focus {
   border-color: var(--accent);
 }

@@ -16,16 +16,31 @@ import ChapterListPanel from "./ChapterListPanel.vue";
 import FileListPanel from "./FileListPanel.vue";
 import BookmarkListPanel from "./BookmarkListPanel.vue";
 import HighlightListPanel from "./HighlightListPanel.vue";
+import AiAssistantPanel from "./AiAssistantPanel.vue";
 import SearchPanel from "./SearchPanel.vue";
+import ExtensionsPanel from "./ExtensionsPanel.vue";
+import ExtensionSidebarIframe from "./ExtensionSidebarIframe.vue";
+import ExtensionActivityIcon from "./ExtensionActivityIcon.vue";
+import type ReaderMain from "./ReaderMain.vue";
 import { icons } from "../icons";
+import type { ReaderCoreSidebarTab, ReaderSidebarTab } from "../constants/readerSidebarTab";
 import {
   collectFsPathsFromDataTransfer,
   dataTransferLikelyHasExternalFiles,
 } from "../utils/dragDropFsPaths";
 
+export type SidebarExtensionContribution = {
+  tabKey: string;
+  title: string;
+  iconUrl: string;
+  entryUrl: string;
+  extId: string;
+  viewId: string;
+};
+
 const props = withDefaults(
   defineProps<{
-    activeTab: "files" | "chapters" | "bookmarks" | "highlights" | "search";
+    activeTab: ReaderSidebarTab;
     /** 非全屏时是否展开右侧面板列；全屏时由 App 固定为 true */
     panelExpanded?: boolean;
     chapters: Chapter[];
@@ -75,6 +90,12 @@ const props = withDefaults(
     fileCategory: string;
     fileSort: FileSortMode;
     fileCategoryCatalog: FileCategoryDefinition[];
+    extensionContributions?: SidebarExtensionContribution[];
+    extensionReloadNonce?: number;
+    /** AI 助手：阅读器实例（取全文建索引） */
+    readerMainRef?: InstanceType<typeof ReaderMain> | null;
+    /** 磁盘上的当前 txt 路径（电子书转换后与逻辑路径可能不同） */
+    physicalReaderPath?: string | null;
   }>(),
   {
     panelExpanded: true,
@@ -98,13 +119,15 @@ const props = withDefaults(
     hasInlineSearchHighlight: false,
     highlightPreviewBg: "var(--reader-bg, var(--bg))",
     monacoFontFamily: "",
+    extensionContributions: () => [],
+    extensionReloadNonce: 0,
+    readerMainRef: null,
+    physicalReaderPath: null,
   },
 );
 
 const emit = defineEmits<{
-  "update:activeTab": [
-    value: "files" | "chapters" | "bookmarks" | "highlights" | "search",
-  ];
+  "update:activeTab": [value: ReaderSidebarTab];
   "update:showChapterCounts": [value: boolean];
   "update:fileCategory": [value: string];
   "update:fileSort": [value: FileSortMode];
@@ -155,6 +178,8 @@ const emit = defineEmits<{
       ranges: Array<{ start: number; end: number }>;
     },
   ];
+  extensionsMutated: [];
+  reloadExtensionViews: [];
 }>();
 
 const {
@@ -174,6 +199,11 @@ const {
 const activityBarWidthPx = `${SIDEBAR_ACTIVITY_BAR_WIDTH}px`;
 
 const activePanelTitle = computed(() => {
+  if (props.activeTab === "extensions") return "扩展";
+  const hit = props.extensionContributions.find(
+    (c) => c.tabKey === props.activeTab,
+  );
+  if (hit) return hit.title;
   switch (props.activeTab) {
     case "files":
       return "文件";
@@ -183,6 +213,8 @@ const activePanelTitle = computed(() => {
       return "书签";
     case "highlights":
       return "高亮词";
+    case "aiAssistant":
+      return "AI 阅读助手";
     case "search":
       return "搜索";
     default:
@@ -203,14 +235,21 @@ const highlightTabIconMuted = computed(() => {
   return !(hasFile && hasHighlights);
 });
 
-function onActivityTabClick(
-  tab: "files" | "chapters" | "bookmarks" | "highlights" | "search",
-) {
+function onPrimaryTabClick(tab: ReaderCoreSidebarTab) {
   if (props.panelExpanded && props.activeTab === tab) {
     emit("requestCollapsePanel");
     return;
   }
   emit("update:activeTab", tab);
+  if (!props.panelExpanded) emit("requestExpandPanel");
+}
+
+function onExtensionViewTabClick(tabKey: string) {
+  if (props.panelExpanded && props.activeTab === tabKey) {
+    emit("requestCollapsePanel");
+    return;
+  }
+  emit("update:activeTab", tabKey);
   if (!props.panelExpanded) emit("requestExpandPanel");
 }
 
@@ -222,6 +261,12 @@ function bindFileListRef(value: any) {
 }
 function bindBookmarkListRef(value: any) {
   bookmarkListRef.value = value;
+}
+
+const extensionsPanelRef = ref<InstanceType<typeof ExtensionsPanel> | null>(null);
+
+function onAddExtensionClick() {
+  extensionsPanelRef.value?.openAddDialog();
 }
 
 const sidebarDragOverlayVisible = ref(false);
@@ -270,6 +315,7 @@ defineExpose({
 <template>
   <aside
     class="sidebar"
+    data-reader-sidebar-root
     data-drop-zone="reader-sidebar"
     @dragenter="onSidebarDragEnter"
     @dragover="onSidebarDragOver"
@@ -288,7 +334,7 @@ defineExpose({
         :class="{ active: panelExpanded && activeTab === 'files' }"
         title="文件"
         aria-label="文件"
-        @click="onActivityTabClick('files')"
+        @click="onPrimaryTabClick('files')"
       >
         <span class="activityIcon" v-html="icons.ebook"></span>
       </button>
@@ -298,7 +344,7 @@ defineExpose({
         :class="{ active: panelExpanded && activeTab === 'chapters' }"
         title="章节"
         aria-label="章节"
-        @click="onActivityTabClick('chapters')"
+        @click="onPrimaryTabClick('chapters')"
       >
         <span class="activityIcon" v-html="icons.chapterList"></span>
       </button>
@@ -308,7 +354,7 @@ defineExpose({
         :class="{ active: panelExpanded && activeTab === 'search' }"
         title="搜索"
         aria-label="搜索"
-        @click="onActivityTabClick('search')"
+        @click="onPrimaryTabClick('search')"
       >
         <span class="activityIcon" v-html="icons.find"></span>
       </button>
@@ -318,7 +364,7 @@ defineExpose({
         :class="{ active: panelExpanded && activeTab === 'bookmarks' }"
         title="书签"
         aria-label="书签"
-        @click="onActivityTabClick('bookmarks')"
+        @click="onPrimaryTabClick('bookmarks')"
       >
         <span class="activityIcon" v-html="bookmarkTabIconHtml"></span>
       </button>
@@ -331,12 +377,47 @@ defineExpose({
         }"
         title="高亮词"
         aria-label="高亮词"
-        @click="onActivityTabClick('highlights')"
+        @click="onPrimaryTabClick('highlights')"
       >
         <span class="activityIcon" v-html="icons.highlightMark"></span>
       </button>
+      <button
+        type="button"
+        class="activityTabBtn"
+        :class="{ active: panelExpanded && activeTab === 'aiAssistant' }"
+        title="AI 阅读助手"
+        aria-label="AI 阅读助手"
+        @click="onPrimaryTabClick('aiAssistant')"
+      >
+        <span class="activityIcon" v-html="icons.aiChat"></span>
+      </button>
       </div>
+      <div class="activityExtensionTabs">
+        <button
+          v-for="c in extensionContributions"
+          :key="c.tabKey"
+          type="button"
+          class="activityTabBtn"
+          :class="{ active: panelExpanded && activeTab === c.tabKey }"
+          :title="c.title"
+          :aria-label="c.title"
+          @click="onExtensionViewTabClick(c.tabKey)"
+        >
+          <ExtensionActivityIcon class="activityExtIconHost" :url="c.iconUrl" />
+        </button>
+      </div>
+      <div class="activityBarSpacer" aria-hidden="true" />
       <div class="activitySecondaryTabs">
+        <button
+          type="button"
+          class="activityTabBtn"
+          :class="{ active: panelExpanded && activeTab === 'extensions' }"
+          title="扩展"
+          aria-label="扩展"
+          @click="onPrimaryTabClick('extensions')"
+        >
+          <span class="activityIcon" v-html="icons.extension"></span>
+        </button>
         <button
           type="button"
           class="activityTabBtn color"
@@ -367,6 +448,13 @@ defineExpose({
         >
           选择目录
         </button>
+        <button
+          v-else-if="activeTab === 'extensions'"
+          class="btn"
+          @click="onAddExtensionClick"
+        >
+          添加扩展
+        </button>
         <div v-else-if="activeTab === 'chapters'" class="sidebarCountToggle">
           <span class="sidebarCountToggleLabel">字数</span>
           <SwitchToggle
@@ -376,6 +464,16 @@ defineExpose({
             @update:model-value="emit('update:showChapterCounts', $event)"
           />
         </div>
+        <button
+          v-else-if="activeTab === 'aiAssistant'"
+          type="button"
+          class="activityTabBtn sidebarHeaderActivityBtn"
+          title="收起侧栏"
+          aria-label="收起侧栏"
+          @click="emit('requestCollapsePanel')"
+        >
+          <span class="activityIcon" v-html="icons.close" />
+        </button>
         <div v-else></div>
       </div>
       <ChapterListPanel
@@ -446,6 +544,42 @@ defineExpose({
         @clear-inline-search-highlight="emit('clearInlineSearchHighlight')"
         @clear-highlights="emit('clearHighlights')"
       />
+      <div
+        v-show="activeTab === 'aiAssistant'"
+        class="sidebarAiHost"
+      >
+        <AiAssistantPanel
+          :session-file-path="currentFilePath"
+          :physical-reader-path="physicalReaderPath ?? null"
+          :chapters="chapters"
+          :active-chapter-idx="activeChapterIdx"
+          :reader-main-ref="readerMainRef ?? null"
+          @jump-to-chapter="emit('jumpToChapter', $event)"
+        />
+      </div>
+      <div
+        v-for="c in extensionContributions"
+        v-show="activeTab === c.tabKey"
+        :key="c.tabKey"
+        class="extensionViewHost"
+      >
+        <ExtensionSidebarIframe
+          :src="c.entryUrl"
+          :ext-id="c.extId"
+          :view-id="c.viewId"
+          :reload-nonce="extensionReloadNonce"
+        />
+      </div>
+      <div
+        v-show="activeTab === 'extensions'"
+        class="extensionsPanelOuter"
+      >
+        <ExtensionsPanel
+          ref="extensionsPanelRef"
+          @did-change="emit('extensionsMutated')"
+          @reload-views="emit('reloadExtensionViews')"
+        />
+      </div>
       <SearchPanel
         v-show="activeTab === 'search'"
         :active="activeTab === 'search'"
@@ -539,10 +673,36 @@ defineExpose({
   flex-direction: column;
 }
 
-.activitySecondaryTabs {
-  margin-top: auto;
+.activityBarSpacer {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.activityExtensionTabs {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
+}
+
+.activitySecondaryTabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.extensionViewHost {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.extensionsPanelOuter {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .activityTabBtn {
@@ -562,7 +722,7 @@ defineExpose({
   color: var(--tab-fg);
 }
 
-.activityTabBtn:not(.color) :deep(svg) path {
+.activityTabBtn:not(.color) .activityIcon :deep(svg) path {
   fill: currentColor;
 }
 .activityTabBtn.color {
@@ -607,6 +767,14 @@ defineExpose({
   background: var(--panel);
 }
 
+.sidebarAiHost {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
 .sidebarHeader {
   flex: 0 0 auto;
   background: var(--bg);
@@ -629,6 +797,18 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+/** AI 顶栏关闭：与活动栏图标同系，缩至与侧栏标题行高度协调 */
+.sidebarHeaderActivityBtn {
+  flex-shrink: 0;
+  width: 36px !important;
+  height: 36px !important;
+}
+
+.sidebarHeaderActivityBtn .activityIcon :deep(svg) {
+  width: 18px;
+  height: 18px;
 }
 
 .sidebarCountToggle {

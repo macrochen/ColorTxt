@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, provide, ref, useTemplateRef, watch } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  provide,
+  ref,
+  useTemplateRef,
+  watch,
+  nextTick,
+} from "vue";
 import type { ComponentPublicInstance } from "vue";
 import { getChapterMatchRules, type Chapter } from "./chapter";
 import AppHeader, { type RecentFileItem } from "./components/AppHeader.vue";
@@ -9,7 +18,23 @@ import ReaderMain from "./components/ReaderMain.vue";
 import AppAlertHost from "./components/AppAlertHost.vue";
 import AppOverlays from "./components/AppOverlays.vue";
 import type { SettingsApplyPayload } from "./components/SettingsPanel.vue";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
+import {
+  mergeAiCustomSkills,
+  mergeAiSkillOverrides,
+  mergeAiSkillsEnabled,
+} from "@shared/aiSkills";
 import { bookmarkNoteInputRefKey } from "./injectionKeys";
+import {
+  extensionHostBridgeKey,
+  useExtensionHostBridge,
+} from "./composables/useExtensionHostBridge";
+import {
+  extensionTabKey,
+  type ReaderSidebarTab,
+} from "./constants/readerSidebarTab";
+import { colortxtExtensionUrl } from "./utils/colortxtExtensionUrl";
+import type { SidebarExtensionContribution } from "./components/ReaderSidebar.vue";
 import { useAppBookmarkPins } from "./composables/useAppBookmarkPins";
 import { useAppChapterListSync } from "./composables/useAppChapterListSync";
 import { useAppChapterNavigation } from "./composables/useAppChapterNavigation";
@@ -203,11 +228,50 @@ const totalLineCount = ref(0);
 const chapters = ref<Chapter[]>([]);
 const activeChapterIdx = ref<number>(-1);
 const showChapterCounts = ref(defaultShowChapterCounts);
-const sidebarTab = ref<
-  "files" | "chapters" | "bookmarks" | "highlights" | "search"
->(
-  "files",
-);
+const sidebarTab = ref<ReaderSidebarTab>("files");
+
+const extensionListSnapshot = ref<
+  Awaited<ReturnType<typeof window.colorTxt.extensionList>>
+>([]);
+const extensionViewReloadNonce = ref(0);
+
+async function refreshExtensionListFromMain() {
+  try {
+    extensionListSnapshot.value = await window.colorTxt.extensionList();
+    await window.colorTxt.extensionRefreshRoots();
+  } catch {
+    extensionListSnapshot.value = [];
+  }
+}
+
+const extensionSidebarContributions = computed<
+  SidebarExtensionContribution[]
+>(() => {
+  const rows = extensionListSnapshot.value;
+  const out: SidebarExtensionContribution[] = [];
+  for (const row of rows) {
+    if (!row.enabled) continue;
+    for (const v of row.views) {
+      out.push({
+        tabKey: extensionTabKey(row.name, v.viewId),
+        title: v.viewTitle,
+        iconUrl: colortxtExtensionUrl(row.name, v.containerIcon),
+        entryUrl: colortxtExtensionUrl(row.name, v.entry),
+        extId: row.name,
+        viewId: v.viewId,
+      });
+    }
+  }
+  return out;
+});
+
+function bumpExtensionViewReload() {
+  extensionViewReloadNonce.value++;
+}
+
+onMounted(() => {
+  void refreshExtensionListFromMain();
+});
 type SidebarSearchResult = {
   physicalLine: number;
   displayLine: number;
@@ -316,6 +380,12 @@ const ebookConvertOutputDir = ref(
     }
   })(),
 );
+/** ReadAny 风格 AI 技能开关（设置 → 技能） */
+const aiSkillsEnabled = ref<Record<string, boolean>>(
+  mergeAiSkillsEnabled(undefined, []),
+);
+const aiSkillOverrides = ref<Record<string, AiSkillUserOverride>>({});
+const aiCustomSkills = ref<AiCustomSkill[]>([]);
 /** 电子书转换阶段（底栏显示「转换中…」） */
 const ebookParsing = ref(false);
 /** 转换进行中的电子书原路径（底栏路径；早于 currentFile 更新） */
@@ -475,6 +545,9 @@ const persistence = useAppPersistence({
   fileCategoryCatalog,
   fileListEditing,
   syncCurrentFile,
+  aiSkillsEnabled,
+  aiSkillOverrides,
+  aiCustomSkills,
 });
 const {
   persistSettings,
@@ -892,6 +965,47 @@ const {
   applyChapterMatchRules,
 } = chapterNav;
 
+const extensionHostBridge = useExtensionHostBridge({
+  readerRef,
+  chapters,
+  activeChapterIdx,
+  lastProbeLine,
+  currentFile,
+  currentTheme,
+  jumpToChapter,
+});
+provide(extensionHostBridgeKey, extensionHostBridge);
+
+watch(currentFile, (v, prev) => {
+  if (prev && !v) extensionHostBridge.notifyFileClosed();
+});
+
+watch(
+  () => [loading.value, currentFile.value, totalLineCount.value] as const,
+  ([ld, cf, lines]) => {
+    if (cf && !ld && lines > 0) {
+      void nextTick(() => extensionHostBridge.notifyFileStreamEnd());
+    }
+  },
+);
+
+watch(
+  chapters,
+  () => {
+    extensionHostBridge.notifyChaptersRebuilt();
+  },
+  { deep: true },
+);
+
+function onReaderExtensionSelectionChange(payload: {
+  text: string;
+  startLine: number;
+  endLine: number;
+  isEmpty: boolean;
+}) {
+  extensionHostBridge.notifySelectionChanged(payload);
+}
+
 const readerUi = useAppReaderUiPrefs({
   readerRef,
   readerFontSize,
@@ -1303,6 +1417,12 @@ function applySettings(payload: SettingsApplyPayload) {
   readerLineHeightMultiple.value = nextLineHeightMultiple;
   readerRef.value?.setFontSize(nextFontSize);
   readerRef.value?.setLineHeightMultiple(nextLineHeightMultiple);
+  aiSkillOverrides.value = mergeAiSkillOverrides(payload.aiSkillOverrides);
+  aiCustomSkills.value = mergeAiCustomSkills(payload.aiCustomSkills ?? []);
+  aiSkillsEnabled.value = mergeAiSkillsEnabled(
+    payload.aiSkillsEnabled,
+    aiCustomSkills.value.map((s) => s.id),
+  );
   persistSettings();
   if (!payload.restoreSessionOnStartup) {
     clearPersistedSession();
@@ -1552,6 +1672,8 @@ useAppShellThemeWatch({
           :monaco-font-family="monacoFontFamily"
           :active-bookmark-line="activeBookmarkLine"
           :current-file-path="currentFile"
+          :physical-reader-path="physicalReaderPath"
+          :reader-main-ref="readerRef"
           :chapters="chapters"
           :active-chapter-idx="activeChapterIdx"
           :format-char-count="formatCharCount"
@@ -1593,6 +1715,10 @@ useAppShellThemeWatch({
           @request-collapse-panel="showSidebar = false"
           @open-color-scheme="showColorSchemePanel = true"
           @open-settings="showSettingsPanel = true"
+          :extension-contributions="extensionSidebarContributions"
+          :extension-reload-nonce="extensionViewReloadNonce"
+          @extensions-mutated="refreshExtensionListFromMain"
+          @reload-extension-views="bumpExtensionViewReload"
         />
         <!-- 放在侧栏容器内，避免移到拖条时触发 @mouseleave 导致全屏侧栏收起 -->
         <div
@@ -1649,6 +1775,9 @@ useAppShellThemeWatch({
           @viewport-visual-progress-change="onViewportVisualProgressChange"
           @add-highlight-term="onAddHighlightTerm"
           @remove-highlight-term="onRemoveHighlightTerm"
+          @reader-extension-selection-change="
+            onReaderExtensionSelectionChange
+          "
         />
         <div
           v-if="showReaderIdleHint"
@@ -1744,6 +1873,9 @@ useAppShellThemeWatch({
       :highlight-colors-light="highlightColorsLight"
       :highlight-colors-dark="highlightColorsDark"
       :ebook-convert-output-dir="ebookConvertOutputDir"
+      :ai-skills-enabled="aiSkillsEnabled"
+      :ai-skill-overrides="aiSkillOverrides"
+      :ai-custom-skills="aiCustomSkills"
       @apply-settings="applySettings"
       @apply-shortcut-bindings="applyShortcutBindings"
       @apply-chapter-rules="applyChapterMatchRules"

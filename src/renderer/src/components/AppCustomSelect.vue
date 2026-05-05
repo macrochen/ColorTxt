@@ -489,6 +489,15 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   box-sizing: border-box;
   min-width: 140px;
 }
+/* 与字体列表 / 历史会话一致：相邻项间距 4px（全局 .appShellMenuItem 为 1px），行高统一 */
+.customSelectPanel :deep(.appShellMenuItem + .appShellMenuItem) {
+  margin-top: 4px;
+}
+.customSelectPanel :deep(.appShellMenuItem) {
+  min-height: 36px;
+  box-sizing: border-box;
+  line-height: 1.2;
+}
 .customSelectSection {
   flex-shrink: 0;
 }

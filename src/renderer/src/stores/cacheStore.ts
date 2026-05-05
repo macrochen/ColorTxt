@@ -15,6 +15,12 @@ import {
   type ReaderSurfacePalette,
 } from "../constants/readerPalette";
 import type { ShortcutActionId } from "../services/shortcutRegistry";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
+import {
+  mergeAiCustomSkills,
+  mergeAiSkillOverrides,
+  mergeAiSkillsEnabled,
+} from "@shared/aiSkills";
 
 export type PersistedSettingsData = {
   theme?: "vs" | "vs-dark";
@@ -73,6 +79,12 @@ export type PersistedSettingsData = {
   fileCategoryCatalog?: FileCategoryDefinition[];
   /** 监控当前打开文件，磁盘变更后自动重新加载 */
   syncCurrentFile?: boolean;
+  /** 内置 AI 技能开关（键为技能 id，缺省由合并逻辑视为启用） */
+  aiSkillsEnabled?: Record<string, boolean>;
+  /** 用户对内置技能的描述与提示词覆盖 */
+  aiSkillOverrides?: Record<string, AiSkillUserOverride>;
+  /** 用户自定义技能列表 */
+  aiCustomSkills?: AiCustomSkill[];
 };
 
 export type PersistedSettingsLoadResult = {
@@ -238,6 +250,34 @@ export function loadPersistedSettingsData(
   if (typeof obj.syncCurrentFile === "boolean") {
     data.syncCurrentFile = obj.syncCurrentFile;
   }
+
+  const hasAiSkillsPersisted =
+    (obj.aiSkillsEnabled && typeof obj.aiSkillsEnabled === "object") ||
+    (obj.aiSkillOverrides && typeof obj.aiSkillOverrides === "object") ||
+    Array.isArray(obj.aiCustomSkills);
+
+  const customSkillList = Array.isArray(obj.aiCustomSkills)
+    ? mergeAiCustomSkills(obj.aiCustomSkills)
+    : [];
+  if (customSkillList.length) {
+    data.aiCustomSkills = customSkillList;
+  }
+  const customSkillIds = customSkillList.map((s) => s.id);
+
+  if (obj.aiSkillOverrides && typeof obj.aiSkillOverrides === "object") {
+    data.aiSkillOverrides = mergeAiSkillOverrides(
+      obj.aiSkillOverrides as Record<string, AiSkillUserOverride>,
+    );
+  }
+
+  if (hasAiSkillsPersisted) {
+    const enabledRaw =
+      obj.aiSkillsEnabled && typeof obj.aiSkillsEnabled === "object"
+        ? (obj.aiSkillsEnabled as Record<string, boolean>)
+        : undefined;
+    data.aiSkillsEnabled = mergeAiSkillsEnabled(enabledRaw, customSkillIds);
+  }
+
   return { data, ebookConvertOutputDirKeyPresent };
 }
 

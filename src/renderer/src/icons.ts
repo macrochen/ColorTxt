@@ -41,6 +41,21 @@ import closeIcon from "./assets/close.svg?raw";
 import ascIcon from "./assets/asc.svg?raw";
 import descIcon from "./assets/desc.svg?raw";
 import folderOpenIcon from "./assets/folder_open.svg?raw";
+import extensionIcon from "./assets/extension.svg?raw";
+import aiChatIcon from "./assets/AI_chat.svg?raw";
+import brainIcon from "./assets/brain.svg?raw";
+import copyIcon from "./assets/copy.svg?raw";
+import downloadIcon from "./assets/download.svg?raw";
+import historyIcon from "./assets/history.svg?raw";
+import newChatIcon from "./assets/new_chat.svg?raw";
+import sendIcon from "./assets/send.svg?raw";
+import successIcon from "./assets/success.svg?raw";
+import viewIcon from "./assets/view.svg?raw";
+import viewOffIcon from "./assets/view_off.svg?raw";
+import refreshIcon from "./assets/refresh.svg?raw";
+import unknowIcon from "./assets/unknow.svg?raw";
+import failIcon from "./assets/fail.svg?raw";
+import stopIcon from "./assets/stop.svg?raw";
 
 export const icons = {
   dark: darkIcon,
@@ -86,4 +101,19 @@ export const icons = {
   asc: ascIcon,
   desc: descIcon,
   folderOpen: folderOpenIcon,
+  extension: extensionIcon,
+  aiChat: aiChatIcon,
+  brain: brainIcon,
+  copy: copyIcon,
+  download: downloadIcon,
+  history: historyIcon,
+  newChat: newChatIcon,
+  send: sendIcon,
+  success: successIcon,
+  view: viewIcon,
+  viewOff: viewOffIcon,
+  refresh: refreshIcon,
+  unknow: unknowIcon,
+  fail: failIcon,
+  stop: stopIcon,
 } as const;

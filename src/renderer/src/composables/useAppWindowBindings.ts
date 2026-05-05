@@ -25,6 +25,19 @@ function isOverSidebarImportDropZone(ev: DragEvent): boolean {
   return false;
 }
 
+/** 键盘事件是否起源于阅读侧栏（活动栏 + 面板）；与全局快捷键捕获监听配合，避免侧栏输入触发阅读器快捷键 */
+function keyboardEventFromReaderSidebar(ev: KeyboardEvent): boolean {
+  for (const n of ev.composedPath()) {
+    if (
+      n instanceof HTMLElement &&
+      n.hasAttribute("data-reader-sidebar-root")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function useAppWindowBindings(deps: {
   readerRef: Ref<InstanceType<typeof ReaderMain> | null>;
   stream: Stream;
@@ -66,7 +79,7 @@ export function useAppWindowBindings(deps: {
   compressBlankLines: Ref<boolean>;
   suppressFileListCenterAfterLoad: Ref<boolean>;
   txtFiles: Ref<Array<{ name: string; path: string; size: number }>>;
-  sidebarTab: Ref<"files" | "chapters" | "bookmarks" | "highlights" | "search">;
+  sidebarTab: Ref<import("../constants/readerSidebarTab").ReaderSidebarTab>;
   currentFile: Ref<string | null>;
   dirListScanning: Ref<boolean>;
   dirListCurrentName: Ref<string>;
@@ -150,6 +163,7 @@ export function useAppWindowBindings(deps: {
       }
       // 有模态时仅由 modalStack 的捕获监听 resolve 一次；此处再 resolve 会关两层
       if (hasModalOnStack()) return;
+      if (keyboardEventFromReaderSidebar(ev)) return;
       ev.preventDefault();
       ev.stopPropagation();
       if (deps.readerRef.value?.isFindWidgetRevealed?.()) {
@@ -210,7 +224,8 @@ export function useAppWindowBindings(deps: {
           scrollPageDown: deps.scrollPageDown,
         },
         () => deps.shortcutBindings.value,
-        () => !hasModalOnStack(),
+        (ev) =>
+          !hasModalOnStack() && !keyboardEventFromReaderSidebar(ev),
       ),
     );
 

@@ -1,5 +1,12 @@
 import { app, contextBridge, ipcRenderer, webUtils } from "electron";
+import type { FileFilter } from "electron";
 import { EBOOK_CONVERT_DEFAULT_SUBDIR } from "@shared/ebookConvertPaths";
+import type {
+  AIChunkRecord,
+  AIChatStreamPayload,
+  AIConfig,
+  AIIndexSearchHit,
+} from "@shared/aiTypes";
 
 /** sandbox 下 preload 不可 require('path')，与 renderer 的 joinFs 行为对齐 */
 function joinUserDataSubdir(userData: string, segment: string): string {
@@ -324,6 +331,188 @@ const api = {
     const fn = (_: unknown, payload: { version: string }) => cb(payload);
     ipcRenderer.on("updater:update-downloaded", fn);
     return () => ipcRenderer.off("updater:update-downloaded", fn);
+  },
+
+  openCtixDialog: () =>
+    ipcRenderer.invoke("dialog:openCtix") as Promise<string | null>,
+  extensionList: () =>
+    ipcRenderer.invoke("extension:list") as Promise<
+      Array<{
+        name: string;
+        displayName: string;
+        description: string;
+        version: string;
+        builtin: boolean;
+        dev: boolean;
+        enabled: boolean;
+        rootFsPath: string;
+        manifest: Record<string, unknown>;
+        views: Array<{
+          viewId: string;
+          viewTitle: string;
+          entry: string;
+          containerId: string;
+          containerTitle: string;
+          containerIcon: string;
+        }>;
+      }>
+    >,
+  extensionInstallFromCtix: (filePath: string) =>
+    ipcRenderer.invoke(
+      "extension:installFromCtix",
+      filePath,
+    ) as Promise<{ ok: true } | { ok: false; error: string }>,
+  extensionUninstall: (name: string) =>
+    ipcRenderer.invoke(
+      "extension:uninstall",
+      name,
+    ) as Promise<{ ok: true } | { ok: false; error: string }>,
+  extensionSetEnabled: (payload: {
+    name: string;
+    enabled: boolean;
+    builtin: boolean;
+  }) =>
+    ipcRenderer.invoke(
+      "extension:setEnabled",
+      payload,
+    ) as Promise<{ ok: true } | { ok: false; error: string }>,
+  extensionGetDevPaths: () =>
+    ipcRenderer.invoke("extension:getDevPaths") as Promise<string[]>,
+  extensionRefreshRoots: () =>
+    ipcRenderer.invoke("extension:refreshRoots") as Promise<{ ok: true }>,
+
+  ai: {
+    configGet: () => ipcRenderer.invoke("ai:config:get") as Promise<AIConfig>,
+    configSet: (cfg: AIConfig) =>
+      ipcRenderer.invoke(
+        "ai:config:set",
+        JSON.parse(JSON.stringify(cfg)) as AIConfig,
+      ) as Promise<{ ok: true } | { ok: false; error: string }>,
+    embed: (texts: string[]) =>
+      ipcRenderer.invoke("ai:embedding:embed", texts) as Promise<number[][]>,
+    indexHasBook: (bookHash: string) =>
+      ipcRenderer.invoke("ai:index:hasBook", bookHash) as Promise<boolean>,
+    indexDeleteBook: (bookHash: string) =>
+      ipcRenderer.invoke("ai:index:deleteBook", bookHash) as Promise<{
+        ok: boolean;
+      }>,
+    indexReplaceChunks: (bookHash: string, chunks: AIChunkRecord[]) =>
+      ipcRenderer.invoke(
+        "ai:index:replaceChunks",
+        bookHash,
+        chunks,
+      ) as Promise<{ ok: boolean; error?: string }>,
+    indexSearch: (args: {
+      bookHash: string;
+      queryEmbedding: number[];
+      topK?: number;
+    }) =>
+      ipcRenderer.invoke("ai:index:search", args) as Promise<
+        AIIndexSearchHit[] | { error: string }
+      >,
+    chatStart: (payload: AIChatStreamPayload) =>
+      ipcRenderer.invoke(
+        "ai:chat:start",
+        JSON.parse(JSON.stringify(payload)) as AIChatStreamPayload,
+      ) as Promise<{ ok: true } | { ok: false; error?: string }>,
+    chatAbort: (requestId: number) =>
+      ipcRenderer.invoke("ai:chat:abort", requestId) as Promise<{ ok: true }>,
+    modelsList: (draft: { baseUrl: string; apiKey: string }) =>
+      ipcRenderer.invoke("ai:models:list", draft) as Promise<
+        { ok: true; models: string[] } | { ok: false; error: string }
+      >,
+    testChat: (draft: Record<string, unknown>) =>
+      ipcRenderer.invoke("ai:test:chat", draft) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    testEmbedding: (draft: Record<string, unknown>) =>
+      ipcRenderer.invoke("ai:test:embedding", draft) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    embeddingProbeDimension: (draft: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    }) =>
+      ipcRenderer.invoke(
+        "ai:embedding:probeDimension",
+        draft,
+      ) as Promise<
+        { ok: true; dimension: number } | { ok: false; error: string }
+      >,
+    threadList: (bookHash: string) =>
+      ipcRenderer.invoke("ai:thread:list", bookHash) as Promise<
+        Array<{
+          id: string;
+          bookHash: string;
+          title: string;
+          createdAt: number;
+          updatedAt: number;
+        }>
+      >,
+    threadCreate: (bookHash: string, title?: string) =>
+      ipcRenderer.invoke("ai:thread:create", bookHash, title) as Promise<string>,
+    threadRename: (threadId: string, title: string) =>
+      ipcRenderer.invoke("ai:thread:rename", threadId, title) as Promise<void>,
+    threadDelete: (threadId: string) =>
+      ipcRenderer.invoke("ai:thread:delete", threadId) as Promise<void>,
+    messageList: (threadId: string) =>
+      ipcRenderer.invoke("ai:message:list", threadId) as Promise<
+        Array<{
+          id: string;
+          threadId: string;
+          role: string;
+          content: string;
+          createdAt: number;
+          aborted: boolean;
+        }>
+      >,
+    messageAppend: (
+      threadId: string,
+      role: "user" | "assistant" | "system",
+      content: string,
+      aborted?: boolean,
+    ) =>
+      ipcRenderer.invoke(
+        "ai:message:append",
+        threadId,
+        role,
+        content,
+        aborted,
+      ) as Promise<string>,
+    exportSave: (payload: {
+      defaultName: string;
+      data: string;
+      filters?: FileFilter[];
+      /** 完整默认路径（目录+文件名），绝对路径时用作对话框初始位置 */
+      defaultPath?: string;
+    }) =>
+      ipcRenderer.invoke("ai:export:save", payload) as Promise<
+        | { ok: true; path: string }
+        | { ok: false; cancelled: true }
+        | { ok: false; error: string }
+      >,
+    onChatChunk: (
+      cb: (payload: { requestId: number; delta: string }) => void,
+    ) => {
+      const fn = (_: unknown, payload: { requestId: number; delta: string }) =>
+        cb(payload);
+      ipcRenderer.on("ai:chat:chunk", fn);
+      return () => ipcRenderer.off("ai:chat:chunk", fn);
+    },
+    onChatDone: (cb: (payload: { requestId: number }) => void) => {
+      const fn = (_: unknown, payload: { requestId: number }) => cb(payload);
+      ipcRenderer.on("ai:chat:done", fn);
+      return () => ipcRenderer.off("ai:chat:done", fn);
+    },
+    onChatError: (
+      cb: (payload: { requestId: number; message: string }) => void,
+    ) => {
+      const fn = (_: unknown, payload: { requestId: number; message: string }) =>
+        cb(payload);
+      ipcRenderer.on("ai:chat:error", fn);
+      return () => ipcRenderer.off("ai:chat:error", fn);
+    },
   },
 };
 

@@ -1,45 +1,49 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { nextTick, ref, toRaw, useTemplateRef, watch } from "vue";
+import type { AIConfig } from "@shared/aiTypes";
+import { defaultAIConfig } from "@shared/aiTypes";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
+import {
+  mergeAiCustomSkills,
+  mergeAiSkillOverrides,
+  mergeAiSkillsEnabled,
+} from "@shared/aiSkills";
 import AppModal from "./AppModal.vue";
-import NumericInput from "./NumericInput.vue";
-import RangeSlider from "./RangeSlider.vue";
-import SwitchToggle from "./SwitchToggle.vue";
-import PathPickerInput from "./PathPickerInput.vue";
+import SettingsTabBar, { type SettingsTabId } from "./SettingsTabBar.vue";
+import SettingsGeneralPanel from "./SettingsGeneralPanel.vue";
+import SettingsReadingPanel from "./SettingsReadingPanel.vue";
+import SettingsAIPanel from "./SettingsAIPanel.vue";
+import SettingsSkillsPanel from "./SettingsSkillsPanel.vue";
 import {
   clampLineHeightMultipleForFontSize,
   defaultChapterMinCharCount,
-  lineHeightMultipleStep,
-  maxChapterMinCharCount,
-  maxFontSize,
-  maxFullscreenReaderWidthPercent,
+  defaultFullscreenReaderWidthPercent,
+  defaultMonacoSmoothScrolling,
+  defaultReaderFontSize,
+  defaultReaderLineHeightMultiple,
+  defaultRecentFilesHistoryLimit,
+  defaultRestoreSessionOnStartup,
+  defaultSyncCurrentFile,
   maxLineHeightMultipleForFontSize,
-  maxRecentFilesHistoryLimit,
-  minChapterMinCharCount,
-  minFontSize,
-  minFullscreenReaderWidthPercent,
-  minLineHeightMultiple,
   persistKey,
-  skipSettingsPersistenceSessionKey,
   skipUnloadPersistenceSessionKey,
 } from "../constants/appUi";
 
 export type SettingsApplyPayload = {
   restoreSessionOnStartup: boolean;
-  /** 监控当前打开文件，磁盘变更后自动重新加载 */
   syncCurrentFile: boolean;
   recentFilesHistoryLimit: number;
   chapterMinCharCount: number;
   fullscreenReaderWidthPercent: number;
-  /** Monaco 阅读区平滑滚动 */
   monacoSmoothScrolling: boolean;
   fontSize: number;
   lineHeightMultiple: number;
-  /** 压缩空行时是否在每行正文下方保留一行空行（章节标题行除外） */
   compressBlankKeepOneBlank: boolean;
-  /** 与「内容上色」同时生效：成对引号/括号是否跨行 */
   txtrDelimitedMatchCrossLine: boolean;
-  /** 电子书转换缓存目录；清空后与源文件同目录；默认 userData/ConvertedTxt */
   ebookConvertOutputDir: string;
+  aiSkillsEnabled: Record<string, boolean>;
+  aiSkillOverrides: Record<string, AiSkillUserOverride>;
+  aiCustomSkills: AiCustomSkill[];
 };
 
 const modelValue = defineModel<boolean>({ default: false });
@@ -57,11 +61,17 @@ const props = defineProps<{
   monacoCustomHighlight: boolean;
   txtrDelimitedMatchCrossLine: boolean;
   ebookConvertOutputDir: string;
+  aiSkillsEnabled: Record<string, boolean>;
+  aiSkillOverrides: Record<string, AiSkillUserOverride>;
+  aiCustomSkills: AiCustomSkill[];
 }>();
 
 const emit = defineEmits<{
   apply: [payload: SettingsApplyPayload];
 }>();
+
+const activeTab = ref<SettingsTabId>("general");
+const settingsTabScrollerEl = useTemplateRef<HTMLElement>("settingsTabScrollerEl");
 
 const draftRestore = ref(true);
 const draftSyncCurrentFile = ref(false);
@@ -75,12 +85,17 @@ const draftCompressBlankKeepOneBlank = ref(false);
 const draftTxtrDelimitedMatchCrossLine = ref(false);
 const draftEbookConvertOutputDir = ref("");
 
-const draftMaxLineHeightMultiple = computed(() =>
-  maxLineHeightMultipleForFontSize(draftFontSize.value),
+const draftAi = ref<AIConfig>(structuredClone(defaultAIConfig));
+const loadedAiDimension = ref(1536);
+const draftAiSkillsEnabled = ref<Record<string, boolean>>(
+  mergeAiSkillsEnabled(undefined, []),
 );
+const draftAiSkillOverrides = ref<Record<string, AiSkillUserOverride>>(
+  mergeAiSkillOverrides(undefined),
+);
+const draftAiCustomSkills = ref<AiCustomSkill[]>([]);
 
-watch(modelValue, (open) => {
-  if (!open) return;
+function syncDraftFromProps() {
   draftRestore.value = props.restoreSessionOnStartup;
   draftSyncCurrentFile.value = props.syncCurrentFile;
   draftRecentLimit.value = props.recentFilesHistoryLimit;
@@ -95,6 +110,32 @@ watch(modelValue, (open) => {
   draftCompressBlankKeepOneBlank.value = props.compressBlankKeepOneBlank;
   draftTxtrDelimitedMatchCrossLine.value = props.txtrDelimitedMatchCrossLine;
   draftEbookConvertOutputDir.value = props.ebookConvertOutputDir;
+  draftAiSkillOverrides.value = mergeAiSkillOverrides(props.aiSkillOverrides);
+  draftAiCustomSkills.value = mergeAiCustomSkills(props.aiCustomSkills ?? []);
+  draftAiSkillsEnabled.value = mergeAiSkillsEnabled(
+    props.aiSkillsEnabled,
+    draftAiCustomSkills.value.map((s) => s.id),
+  );
+}
+
+async function syncAiFromMain() {
+  try {
+    const c = await window.colorTxt.ai.configGet();
+    draftAi.value = structuredClone(c);
+    loadedAiDimension.value = c.embedding.dimension;
+  } catch {
+    draftAi.value = structuredClone(defaultAIConfig);
+    loadedAiDimension.value = defaultAIConfig.embedding.dimension;
+  }
+}
+
+watch(modelValue, (open) => {
+  if (!open) {
+    activeTab.value = "general";
+    return;
+  }
+  syncDraftFromProps();
+  void syncAiFromMain();
 });
 
 watch(draftFontSize, (fs) => {
@@ -104,11 +145,72 @@ watch(draftFontSize, (fs) => {
   }
 });
 
+watch(activeTab, () => {
+  void nextTick(() => {
+    const el = settingsTabScrollerEl.value;
+    if (el) el.scrollTop = 0;
+  });
+});
+
+function resetGeneralDraft() {
+  draftRestore.value = defaultRestoreSessionOnStartup;
+  draftSyncCurrentFile.value = defaultSyncCurrentFile;
+  draftRecentLimit.value = defaultRecentFilesHistoryLimit;
+  draftChapterMinCharCount.value = defaultChapterMinCharCount;
+  draftEbookConvertOutputDir.value = "";
+}
+
+function resetReadingDraft() {
+  draftFontSize.value = defaultReaderFontSize;
+  draftLineHeightMultiple.value = clampLineHeightMultipleForFontSize(
+    defaultReaderFontSize,
+    defaultReaderLineHeightMultiple,
+  );
+  draftMonacoSmoothScrolling.value = defaultMonacoSmoothScrolling;
+  draftCompressBlankKeepOneBlank.value = false;
+  draftTxtrDelimitedMatchCrossLine.value = false;
+  draftFullscreenReaderWidthPercent.value = defaultFullscreenReaderWidthPercent;
+}
+
+function resetAiDraft() {
+  draftAi.value = structuredClone(defaultAIConfig);
+}
+
+function resetSkillsDraft() {
+  draftAiSkillOverrides.value = mergeAiSkillOverrides(undefined);
+  draftAiCustomSkills.value = [];
+  draftAiSkillsEnabled.value = mergeAiSkillsEnabled(undefined, []);
+}
+
+function onResetCurrentTab() {
+  if (activeTab.value === "general") resetGeneralDraft();
+  else if (activeTab.value === "reading") resetReadingDraft();
+  else if (activeTab.value === "ai") resetAiDraft();
+  else if (activeTab.value === "skills") resetSkillsDraft();
+}
+
 function onCancel() {
   modelValue.value = false;
 }
 
-function onConfirm() {
+async function onConfirm() {
+  if (draftAi.value.embedding.dimension !== loadedAiDimension.value) {
+    const ok = window.confirm(
+      "向量维度已修改，保存后将清空所有已构建的书籍向量索引。是否继续？",
+    );
+    if (!ok) return;
+  }
+
+  const aiPayload = JSON.parse(
+    JSON.stringify(toRaw(draftAi.value)),
+  ) as AIConfig;
+  const aiRes = await window.colorTxt.ai.configSet(aiPayload);
+  if (!aiRes.ok) {
+    alert(aiRes.error ?? "保存 AI 配置失败");
+    return;
+  }
+  loadedAiDimension.value = draftAi.value.embedding.dimension;
+
   emit("apply", {
     restoreSessionOnStartup: draftRestore.value,
     syncCurrentFile: draftSyncCurrentFile.value,
@@ -121,23 +223,13 @@ function onConfirm() {
     compressBlankKeepOneBlank: draftCompressBlankKeepOneBlank.value,
     txtrDelimitedMatchCrossLine: draftTxtrDelimitedMatchCrossLine.value,
     ebookConvertOutputDir: draftEbookConvertOutputDir.value.trim(),
+    aiSkillsEnabled: mergeAiSkillsEnabled(
+      draftAiSkillsEnabled.value,
+      draftAiCustomSkills.value.map((s) => s.id),
+    ),
+    aiSkillOverrides: mergeAiSkillOverrides(draftAiSkillOverrides.value),
+    aiCustomSkills: mergeAiCustomSkills(draftAiCustomSkills.value),
   });
-}
-
-async function onRestoreDefaults() {
-  const ok = await window.colorTxt.confirmResetUiSettings();
-  if (!ok) return;
-  try {
-    sessionStorage.setItem(skipSettingsPersistenceSessionKey, "1");
-  } catch {
-    // ignore
-  }
-  try {
-    localStorage.removeItem(persistKey);
-  } catch {
-    // ignore
-  }
-  window.location.reload();
 }
 
 async function onClearCache() {
@@ -163,195 +255,70 @@ async function onClearCache() {
   <AppModal
     v-model="modelValue"
     title="设置"
-    max-width="500px"
+    max-width="640px"
+    panel-class="settingsPanelModal"
     :mask-closable="false"
     :esc-closable="true"
+    :body-scroll="false"
   >
-    <div class="settingsBody">
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel">启动时恢复上次关闭的文件</span>
-          <SwitchToggle
-            v-model="draftRestore"
-            aria-label="启动时恢复上次关闭的文件"
-          />
-        </div>
-        <p class="settingsHint">
-          关闭后，退出应用时不再保存当前阅读会话（打开的文件及阅读位置）。
-        </p>
-      </div>
+    <div class="settingsLayout">
+      <SettingsTabBar v-model:active-tab="activeTab" />
 
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel">同步当前文件</span>
-          <SwitchToggle
-            v-model="draftSyncCurrentFile"
-            aria-label="同步当前文件"
-          />
-        </div>
-        <p class="settingsHint">
-          开启后，如果当前正在阅读的文件被修改，将自动重新加载。
-        </p>
-      </div>
+      <div class="settingsScroll">
+        <div ref="settingsTabScrollerEl" class="settingsTabScroller">
+          <div class="settingsTabContent">
+            <SettingsGeneralPanel
+              v-show="activeTab === 'general'"
+              v-model:draft-restore="draftRestore"
+              v-model:draft-sync-current-file="draftSyncCurrentFile"
+              v-model:draft-recent-limit="draftRecentLimit"
+              v-model:draft-chapter-min-char-count="draftChapterMinCharCount"
+              v-model:draft-ebook-convert-output-dir="
+                draftEbookConvertOutputDir
+              "
+              @clear-cache="onClearCache"
+            />
 
-      <div class="settingsRow">
-        <div class="settingsRowMain settingsRowMain--baseline">
-          <span class="settingsLabel">历史记录数量</span>
-          <NumericInput
-            v-model="draftRecentLimit"
-            :min="0"
-            :max="maxRecentFilesHistoryLimit"
-            integer
-            aria-label="历史记录数量"
-          />
-        </div>
-        <p class="settingsHint">
-          最近打开文件的保留条数；设置为 0 时不记录最近打开的文件。
-        </p>
-      </div>
+            <SettingsReadingPanel
+              v-show="activeTab === 'reading'"
+              v-model:draft-font-size="draftFontSize"
+              v-model:draft-line-height-multiple="draftLineHeightMultiple"
+              v-model:draft-monaco-smooth-scrolling="draftMonacoSmoothScrolling"
+              v-model:draft-compress-blank-keep-one-blank="
+                draftCompressBlankKeepOneBlank
+              "
+              v-model:draft-txtr-delimited-match-cross-line="
+                draftTxtrDelimitedMatchCrossLine
+              "
+              v-model:draft-fullscreen-reader-width-percent="
+                draftFullscreenReaderWidthPercent
+              "
+              :monaco-custom-highlight="monacoCustomHighlight"
+            />
 
-      <div class="settingsRow">
-        <div class="settingsRowMain settingsRowMain--baseline">
-          <span class="settingsLabel small">电子书转换缓存目录</span>
-          <div class="settingsEbookDirActions">
-            <PathPickerInput
-              v-model="draftEbookConvertOutputDir"
-              is-directory
-              placeholder="源文件目录"
-              aria-label="电子书转换缓存目录"
-              class="settingsEbookPathPicker"
+            <SettingsAIPanel v-show="activeTab === 'ai'" v-model="draftAi" />
+
+            <SettingsSkillsPanel
+              v-show="activeTab === 'skills'"
+              v-model:enabled="draftAiSkillsEnabled"
+              v-model:overrides="draftAiSkillOverrides"
+              v-model:custom-skills="draftAiCustomSkills"
             />
           </div>
         </div>
-        <p class="settingsHint">
-          打开其他格式的电子书时，会自动转换为 txt 格式并缓存到该目录下；<br />如果放空，将缓存到源文件同目录下。
-        </p>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel">字号（{{ draftFontSize }} px）</span>
-          <RangeSlider
-            v-model="draftFontSize"
-            :min="minFontSize"
-            :max="maxFontSize"
-            :step="1"
-            :show-percent="false"
-            aria-label="阅读字号"
-          />
-        </div>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel"
-            >行高（×{{ draftLineHeightMultiple.toFixed(1) }}）</span
-          >
-          <RangeSlider
-            v-model="draftLineHeightMultiple"
-            :min="minLineHeightMultiple"
-            :max="draftMaxLineHeightMultiple"
-            :step="lineHeightMultipleStep"
-            :show-percent="false"
-            aria-label="行高倍数"
-          />
-        </div>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel">压缩空行时保留一个空行</span>
-          <SwitchToggle
-            v-model="draftCompressBlankKeepOneBlank"
-            aria-label="压缩空行时保留一个空行"
-          />
-        </div>
-        <p class="settingsHint">
-          仅在开启「压缩空行」时生效，在每行下方保留一个空行。
-        </p>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain settingsRowMain--baseline">
-          <span class="settingsLabel">章节最少字数</span>
-          <NumericInput
-            v-model="draftChapterMinCharCount"
-            :min="minChapterMinCharCount"
-            :max="maxChapterMinCharCount"
-            integer
-            aria-label="章节最少字数"
-          />
-        </div>
-        <p class="settingsHint">
-          少于该字数的将不会被识别为章节；设置为 0 时不限制。
-        </p>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel">引号/括号匹配支持跨行</span>
-          <SwitchToggle
-            v-model="draftTxtrDelimitedMatchCrossLine"
-            :disabled="!monacoCustomHighlight"
-            aria-label="引号/括号匹配支持跨行"
-          />
-        </div>
-        <p class="settingsHint">
-          仅在开启「内容上色」时生效，开启后引号和括号会跨行匹配；<br />如果出现大段非引号/括号内的文本被误上色，是因为原文没有正确关闭引号/括号，可禁用该选项以降低影响范围。
-        </p>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel">平滑滚动</span>
-          <SwitchToggle
-            v-model="draftMonacoSmoothScrolling"
-            aria-label="阅读区平滑滚动"
-          />
-        </div>
-        <p class="settingsHint">
-          关闭后，阅读区滚动不再使用平滑动画。
-        </p>
-      </div>
-
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel"
-            >全屏阅读区域宽度（{{ draftFullscreenReaderWidthPercent }}%）</span
-          >
-          <RangeSlider
-            v-model="draftFullscreenReaderWidthPercent"
-            :min="minFullscreenReaderWidthPercent"
-            :max="maxFullscreenReaderWidthPercent"
-            :step="1"
-            :show-percent="false"
-            aria-label="全屏阅读区域宽度百分比"
-          />
-        </div>
-        <p class="settingsHint">仅在全屏模式生效，用于控制阅读区域宽度。</p>
       </div>
     </div>
 
     <template #footer>
       <div class="settingsFooter">
-        <div class="settingsFooterLeft">
-          <button
-            class="btn"
-            type="button"
-            size="large"
-            @click="onRestoreDefaults"
-          >
-            恢复默认
-          </button>
-          <button
-            class="btn warning"
-            type="button"
-            size="large"
-            @click="onClearCache"
-          >
-            清除缓存
-          </button>
-        </div>
+        <button
+          class="btn"
+          type="button"
+          size="large"
+          @click="onResetCurrentTab"
+        >
+          重置当前页
+        </button>
         <div class="settingsFooterActions">
           <button class="btn" type="button" size="large" @click="onCancel">
             取消
@@ -371,63 +338,44 @@ async function onClearCache() {
 </template>
 
 <style scoped>
-.settingsBody {
-  padding: 0 4px 4px;
+.settingsLayout {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.settingsRow {
+.settingsScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
-.settingsRowMain {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
+/**
+ * 滚动条贴齐内容区右缘（不受正文左右 padding 影响）；
+ * 可滚动高度由 flex 链 `min-height: 0` 约束。
+ */
+.settingsTabScroller {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 16px 8px 8px 0;
 }
 
-.settingsRowMain--baseline {
-  align-items: baseline;
+/** 仅标签页正文内边距（不含顶部分类标签栏） */
+.settingsTabContent {
+  box-sizing: border-box;
 }
 
-.settingsEbookDirActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 1 1 65%;
-  min-width: 0;
-}
-
-.settingsEbookPathPicker {
-  flex: 1;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.settingsLabel {
-  font-size: 14px;
-  color: var(--fg);
-  flex: 1 1 60%;
-  min-width: 60%;
-}
-.settingsLabel.small {
-  flex: 1 1 35%;
-  min-width: 35%;
-}
-
-.settingsHint {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.45;
+.resetHint {
+  margin: 8px 4px 0;
+  font-size: 11px;
   color: var(--muted);
+  line-height: 1.4;
 }
 
 .settingsFooter {
@@ -436,13 +384,7 @@ async function onClearCache() {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-}
-
-.settingsFooterLeft {
-  display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
 }
 
 .settingsFooterActions {
@@ -450,5 +392,13 @@ async function onClearCache() {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+  margin-left: auto;
+}
+</style>
+
+<style>
+/* 非 scoped：与配色面板一致拔高模态高度 */
+:deep(.settingsPanelModal) {
+  max-height: min(640px, calc(100vh - 48px));
 }
 </style>

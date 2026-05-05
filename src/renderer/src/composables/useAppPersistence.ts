@@ -76,6 +76,12 @@ import { EBOOK_CONVERT_DEFAULT_SUBDIR } from "@shared/ebookConvertPaths";
 import type { ShortcutBindingMap } from "../services/shortcutRegistry";
 import { mergeShortcutBindings } from "../services/shortcutUtils";
 import { joinFs } from "../ebook/pathUtils";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
+import {
+  mergeAiCustomSkills,
+  mergeAiSkillOverrides,
+  mergeAiSkillsEnabled,
+} from "@shared/aiSkills";
 
 /** 同步 preload 路径偶发不可用（如极早时机）时用主进程 IPC 兜底，避免首次把空目录写入设置后永久固化 */
 async function resolveDefaultEbookConvertOutputDir(): Promise<string> {
@@ -153,6 +159,10 @@ export function useAppPersistence(deps: {
   fileListEditing: Ref<boolean>;
   /** 监控当前打开文件，磁盘变更后自动重新加载 */
   syncCurrentFile: Ref<boolean>;
+  /** ReadAny 风格内置 AI 技能启用状态 */
+  aiSkillsEnabled: Ref<Record<string, boolean>>;
+  aiSkillOverrides: Ref<Record<string, AiSkillUserOverride>>;
+  aiCustomSkills: Ref<AiCustomSkill[]>;
 }) {
   const settingsLoaded = ref(false);
   let storageSyncBound = false;
@@ -709,6 +719,18 @@ export function useAppPersistence(deps: {
     } else {
       deps.fileCategoryCatalog.value = cloneDefaultFileCategoryCatalog();
     }
+
+    deps.aiSkillOverrides.value = mergeAiSkillOverrides(data.aiSkillOverrides);
+    deps.aiCustomSkills.value = data.aiCustomSkills?.length
+      ? mergeAiCustomSkills(data.aiCustomSkills)
+      : [];
+
+    const customIds = deps.aiCustomSkills.value.map((s) => s.id);
+    deps.aiSkillsEnabled.value = mergeAiSkillsEnabled(
+      data.aiSkillsEnabled,
+      customIds,
+    );
+
     return { ebookConvertOutputDirKeyPresent };
   }
 
@@ -766,6 +788,15 @@ export function useAppPersistence(deps: {
       fileCategory: deps.fileCategory.value,
       fileSort: deps.fileSort.value,
       fileCategoryCatalog: deps.fileCategoryCatalog.value,
+      aiSkillsEnabled: deps.aiSkillsEnabled.value,
+      aiSkillOverrides:
+        Object.keys(deps.aiSkillOverrides.value).length > 0
+          ? deps.aiSkillOverrides.value
+          : undefined,
+      aiCustomSkills:
+        deps.aiCustomSkills.value.length > 0
+          ? deps.aiCustomSkills.value
+          : undefined,
     });
   }
 
