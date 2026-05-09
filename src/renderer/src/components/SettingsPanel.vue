@@ -13,6 +13,7 @@ import SettingsTabBar, { type SettingsTabId } from "./SettingsTabBar.vue";
 import SettingsGeneralPanel from "./SettingsGeneralPanel.vue";
 import SettingsReadingPanel from "./SettingsReadingPanel.vue";
 import SettingsAIPanel from "./SettingsAIPanel.vue";
+import SettingsVectorModelPanel from "./SettingsVectorModelPanel.vue";
 import SettingsSkillsPanel from "./SettingsSkillsPanel.vue";
 import {
   clampLineHeightMultipleForFontSize,
@@ -28,6 +29,8 @@ import {
   persistKey,
   skipUnloadPersistenceSessionKey,
 } from "../constants/appUi";
+import { appAlert, appConfirm } from "../services/appDialog";
+import { icons } from "../icons";
 
 export type SettingsApplyPayload = {
   restoreSessionOnStartup: boolean;
@@ -71,7 +74,17 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref<SettingsTabId>("general");
-const settingsTabScrollerEl = useTemplateRef<HTMLElement>("settingsTabScrollerEl");
+const settingsTabScrollerEl = useTemplateRef<HTMLElement>(
+  "settingsTabScrollerEl",
+);
+
+type SettingsSkillsPanelExpose = { openCreateSkill: () => void };
+const skillsPanelRef =
+  useTemplateRef<SettingsSkillsPanelExpose>("skillsPanelRef");
+
+function onAddSkillClick() {
+  skillsPanelRef.value?.openCreateSkill();
+}
 
 const draftRestore = ref(true);
 const draftSyncCurrentFile = ref(false);
@@ -173,7 +186,22 @@ function resetReadingDraft() {
 }
 
 function resetAiDraft() {
-  draftAi.value = structuredClone(defaultAIConfig);
+  const def = defaultAIConfig;
+  draftAi.value = {
+    ...draftAi.value,
+    chat: structuredClone(def.chat),
+    quickQuestions: structuredClone(def.quickQuestions),
+  };
+}
+
+function resetVectorModelDraft() {
+  const def = defaultAIConfig;
+  draftAi.value = {
+    ...draftAi.value,
+    embeddingEnabled: def.embeddingEnabled,
+    embedding: structuredClone(def.embedding),
+    ragTopK: def.ragTopK,
+  };
 }
 
 function resetSkillsDraft() {
@@ -186,6 +214,7 @@ function onResetCurrentTab() {
   if (activeTab.value === "general") resetGeneralDraft();
   else if (activeTab.value === "reading") resetReadingDraft();
   else if (activeTab.value === "ai") resetAiDraft();
+  else if (activeTab.value === "vectorModel") resetVectorModelDraft();
   else if (activeTab.value === "skills") resetSkillsDraft();
 }
 
@@ -195,8 +224,9 @@ function onCancel() {
 
 async function onConfirm() {
   if (draftAi.value.embedding.dimension !== loadedAiDimension.value) {
-    const ok = window.confirm(
+    const ok = await appConfirm(
       "向量维度已修改，保存后将清空所有已构建的书籍向量索引。是否继续？",
+      "确认保存",
     );
     if (!ok) return;
   }
@@ -206,7 +236,7 @@ async function onConfirm() {
   ) as AIConfig;
   const aiRes = await window.colorTxt.ai.configSet(aiPayload);
   if (!aiRes.ok) {
-    alert(aiRes.error ?? "保存 AI 配置失败");
+    await appAlert(aiRes.error ?? "保存 AI 配置失败");
     return;
   }
   loadedAiDimension.value = draftAi.value.embedding.dimension;
@@ -255,7 +285,7 @@ async function onClearCache() {
   <AppModal
     v-model="modelValue"
     title="设置"
-    max-width="640px"
+    max-width="700px"
     panel-class="settingsPanelModal"
     :mask-closable="false"
     :esc-closable="true"
@@ -298,7 +328,13 @@ async function onClearCache() {
 
             <SettingsAIPanel v-show="activeTab === 'ai'" v-model="draftAi" />
 
+            <SettingsVectorModelPanel
+              v-show="activeTab === 'vectorModel'"
+              v-model="draftAi"
+            />
+
             <SettingsSkillsPanel
+              ref="skillsPanelRef"
               v-show="activeTab === 'skills'"
               v-model:enabled="draftAiSkillsEnabled"
               v-model:overrides="draftAiSkillOverrides"
@@ -311,14 +347,26 @@ async function onClearCache() {
 
     <template #footer>
       <div class="settingsFooter">
-        <button
-          class="btn"
-          type="button"
-          size="large"
-          @click="onResetCurrentTab"
-        >
-          重置当前页
-        </button>
+        <div class="settingsFooterStart">
+          <button
+            class="btn"
+            type="button"
+            size="large"
+            @click="onResetCurrentTab"
+          >
+            重置当前页
+          </button>
+          <button
+            v-show="activeTab === 'skills'"
+            class="btn settingsFooterAddBtn"
+            type="button"
+            size="large"
+            @click="onAddSkillClick"
+          >
+            <span class="settingsFooterAddIcon" aria-hidden="true" v-html="icons.add" />
+            添加技能
+          </button>
+        </div>
         <div class="settingsFooterActions">
           <button class="btn" type="button" size="large" @click="onCancel">
             取消
@@ -387,6 +435,35 @@ async function onClearCache() {
   flex-wrap: wrap;
 }
 
+.settingsFooterStart {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settingsFooterAddBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settingsFooterAddIcon {
+  display: inline-flex;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.settingsFooterAddIcon :deep(svg) {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.settingsFooterAddIcon :deep(path) {
+  fill: currentColor;
+}
+
 .settingsFooterActions {
   display: flex;
   align-items: center;
@@ -396,9 +473,9 @@ async function onClearCache() {
 }
 </style>
 
-<style>
+<style scoped>
 /* 非 scoped：与配色面板一致拔高模态高度 */
 :deep(.settingsPanelModal) {
-  max-height: min(640px, calc(100vh - 48px));
+  height: min(640px, calc(100vh - 48px));
 }
 </style>

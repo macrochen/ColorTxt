@@ -2,6 +2,8 @@ import { app, contextBridge, ipcRenderer, webUtils } from "electron";
 import type { FileFilter } from "electron";
 import { EBOOK_CONVERT_DEFAULT_SUBDIR } from "@shared/ebookConvertPaths";
 import type {
+  AIAgentRendererEvent,
+  AIAgentStartPayload,
   AIChunkRecord,
   AIChatStreamPayload,
   AIConfig,
@@ -333,54 +335,6 @@ const api = {
     return () => ipcRenderer.off("updater:update-downloaded", fn);
   },
 
-  openCtixDialog: () =>
-    ipcRenderer.invoke("dialog:openCtix") as Promise<string | null>,
-  extensionList: () =>
-    ipcRenderer.invoke("extension:list") as Promise<
-      Array<{
-        name: string;
-        displayName: string;
-        description: string;
-        version: string;
-        builtin: boolean;
-        dev: boolean;
-        enabled: boolean;
-        rootFsPath: string;
-        manifest: Record<string, unknown>;
-        views: Array<{
-          viewId: string;
-          viewTitle: string;
-          entry: string;
-          containerId: string;
-          containerTitle: string;
-          containerIcon: string;
-        }>;
-      }>
-    >,
-  extensionInstallFromCtix: (filePath: string) =>
-    ipcRenderer.invoke(
-      "extension:installFromCtix",
-      filePath,
-    ) as Promise<{ ok: true } | { ok: false; error: string }>,
-  extensionUninstall: (name: string) =>
-    ipcRenderer.invoke(
-      "extension:uninstall",
-      name,
-    ) as Promise<{ ok: true } | { ok: false; error: string }>,
-  extensionSetEnabled: (payload: {
-    name: string;
-    enabled: boolean;
-    builtin: boolean;
-  }) =>
-    ipcRenderer.invoke(
-      "extension:setEnabled",
-      payload,
-    ) as Promise<{ ok: true } | { ok: false; error: string }>,
-  extensionGetDevPaths: () =>
-    ipcRenderer.invoke("extension:getDevPaths") as Promise<string[]>,
-  extensionRefreshRoots: () =>
-    ipcRenderer.invoke("extension:refreshRoots") as Promise<{ ok: true }>,
-
   ai: {
     configGet: () => ipcRenderer.invoke("ai:config:get") as Promise<AIConfig>,
     configSet: (cfg: AIConfig) =>
@@ -388,8 +342,16 @@ const api = {
         "ai:config:set",
         JSON.parse(JSON.stringify(cfg)) as AIConfig,
       ) as Promise<{ ok: true } | { ok: false; error: string }>,
-    embed: (texts: string[]) =>
-      ipcRenderer.invoke("ai:embedding:embed", texts) as Promise<number[][]>,
+    embed: (texts: string[], requestId?: number) =>
+      ipcRenderer.invoke(
+        "ai:embedding:embed",
+        texts,
+        requestId ?? null,
+      ) as Promise<number[][]>,
+    embedAbort: (requestId: number) =>
+      ipcRenderer.invoke("ai:embedding:abort", requestId) as Promise<{
+        ok: true;
+      }>,
     indexHasBook: (bookHash: string) =>
       ipcRenderer.invoke("ai:index:hasBook", bookHash) as Promise<boolean>,
     indexDeleteBook: (bookHash: string) =>
@@ -414,6 +376,11 @@ const api = {
       ipcRenderer.invoke(
         "ai:chat:start",
         JSON.parse(JSON.stringify(payload)) as AIChatStreamPayload,
+      ) as Promise<{ ok: true } | { ok: false; error?: string }>,
+    agentStart: (payload: AIAgentStartPayload) =>
+      ipcRenderer.invoke(
+        "ai:agent:start",
+        JSON.parse(JSON.stringify(payload)) as AIAgentStartPayload,
       ) as Promise<{ ok: true } | { ok: false; error?: string }>,
     chatAbort: (requestId: number) =>
       ipcRenderer.invoke("ai:chat:abort", requestId) as Promise<{ ok: true }>,
@@ -448,12 +415,18 @@ const api = {
           title: string;
           createdAt: number;
           updatedAt: number;
+          titleLocked: number;
         }>
       >,
     threadCreate: (bookHash: string, title?: string) =>
       ipcRenderer.invoke("ai:thread:create", bookHash, title) as Promise<string>,
-    threadRename: (threadId: string, title: string) =>
-      ipcRenderer.invoke("ai:thread:rename", threadId, title) as Promise<void>,
+    threadRename: (threadId: string, title: string, userChosen?: boolean) =>
+      ipcRenderer.invoke(
+        "ai:thread:rename",
+        threadId,
+        title,
+        userChosen === true,
+      ) as Promise<void>,
     threadDelete: (threadId: string) =>
       ipcRenderer.invoke("ai:thread:delete", threadId) as Promise<void>,
     messageList: (threadId: string) =>
@@ -465,6 +438,10 @@ const api = {
           content: string;
           createdAt: number;
           aborted: boolean;
+          toolCallId?: string | null;
+          toolName?: string | null;
+          toolCallsJson?: string | null;
+          payload?: string | null;
         }>
       >,
     messageAppend: (
@@ -512,6 +489,11 @@ const api = {
         cb(payload);
       ipcRenderer.on("ai:chat:error", fn);
       return () => ipcRenderer.off("ai:chat:error", fn);
+    },
+    onAgentEvent: (cb: (payload: AIAgentRendererEvent) => void) => {
+      const fn = (_: unknown, payload: AIAgentRendererEvent) => cb(payload);
+      ipcRenderer.on("ai:agent:event", fn);
+      return () => ipcRenderer.off("ai:agent:event", fn);
     },
   },
 };

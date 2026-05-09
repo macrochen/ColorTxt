@@ -25,6 +25,12 @@ export type CustomSelectItem =
       skipCategoryMark?: boolean;
       /** 主标签后的附加文案（如「(12)」、说明等），样式见 .appShellMenuItemSuffix */
       labelSuffix?: string;
+      /** 追加到 `appShellMenuItemPrefix` 容器上的 class（如旋转动画） */
+      prefixWrapperClass?: string;
+      /** 追加到菜单按钮上的 class（如 `appShellMenuItem--success`） */
+      itemClass?: string;
+      /** `actionOnly` 为 true 时点击后不自动收合面板 */
+      keepOpenOnAction?: boolean;
     }
   | { kind: "divider" };
 
@@ -108,16 +114,37 @@ const posLeft = ref(0);
 const posTop = ref(0);
 const panelWidth = ref(160);
 
-function clampPanel() {
+/** 根据视口上下可用空间决定向下或向上弹出，并做边缘夹紧 */
+function applyPanelPosition(margin = 8, gap = 4) {
+  const trig = triggerRef.value;
   const panel = panelRef.value;
-  if (!panel) return;
-  const margin = 8;
-  const w = panel.offsetWidth;
+  if (!trig || !panel) return;
+  const r = trig.getBoundingClientRect();
   const h = panel.offsetHeight;
+  const w = panel.offsetWidth;
+  if (h < 1 || w < 1) return;
+
+  const spaceBelow = window.innerHeight - margin - r.bottom - gap;
+  const spaceAbove = r.top - margin - gap;
+
+  let top: number;
+  if (h <= spaceBelow) {
+    top = r.bottom + gap;
+  } else if (h <= spaceAbove) {
+    top = r.top - h - gap;
+  } else if (spaceAbove >= spaceBelow) {
+    top = Math.max(margin, r.top - h - gap);
+  } else {
+    top = Math.min(r.bottom + gap, window.innerHeight - margin - h);
+  }
+
+  posTop.value = Math.min(
+    Math.max(margin, top),
+    Math.max(margin, window.innerHeight - h - margin),
+  );
+
   const maxX = Math.max(margin, window.innerWidth - w - margin);
-  const maxY = Math.max(margin, window.innerHeight - h - margin);
-  posLeft.value = Math.min(Math.max(margin, posLeft.value), maxX);
-  posTop.value = Math.min(Math.max(margin, posTop.value), maxY);
+  posLeft.value = Math.min(Math.max(margin, r.left), maxX);
 }
 
 async function positionPanel() {
@@ -131,7 +158,11 @@ async function positionPanel() {
   posLeft.value = r.left;
   posTop.value = r.bottom + 4;
   await nextTick();
-  clampPanel();
+  await nextTick();
+  applyPanelPosition();
+  requestAnimationFrame(() => {
+    applyPanelPosition();
+  });
 }
 
 function toggle() {
@@ -146,7 +177,7 @@ function close() {
 function selectItem(it: Extract<CustomSelectItem, { kind: "item" }>) {
   if (it.actionOnly) {
     emit("action", it.id);
-    close();
+    if (!it.keepOpenOnAction) close();
     return;
   }
   emit("update:modelValue", it.id);
@@ -169,22 +200,26 @@ function onKey(ev: KeyboardEvent) {
   }
 }
 
-watch(open, async (v) => {
-  emit("panel-open-change", v);
-  if (v) {
-    await nextTick();
-    await positionPanel();
-    await nextTick();
-    updateScrollAreaScrollbarFlag();
-    bindScrollAreaResizeObserver();
-    requestAnimationFrame(() => {
+watch(
+  open,
+  async (v) => {
+    emit("panel-open-change", v);
+    if (v) {
+      await nextTick();
+      await positionPanel();
+      await nextTick();
       updateScrollAreaScrollbarFlag();
-    });
-  } else {
-    unbindScrollAreaResizeObserver();
-    scrollAreaHasScrollbar.value = false;
-  }
-}, { immediate: true });
+      bindScrollAreaResizeObserver();
+      requestAnimationFrame(() => {
+        updateScrollAreaScrollbarFlag();
+      });
+    } else {
+      unbindScrollAreaResizeObserver();
+      scrollAreaHasScrollbar.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   () => [props.scrollItems.length, props.scrollMaxHeight] as const,
@@ -193,6 +228,17 @@ watch(
     await nextTick();
     updateScrollAreaScrollbarFlag();
   },
+);
+
+watch(
+  () => props.fixedTopItems,
+  async () => {
+    if (!open.value) return;
+    await nextTick();
+    applyPanelPosition();
+    updateScrollAreaScrollbarFlag();
+  },
+  { deep: true },
 );
 
 onMounted(() => {
@@ -215,6 +261,7 @@ defineExpose({
 function itemButtonClass(it: Extract<CustomSelectItem, { kind: "item" }>) {
   const c = ["appShellMenuItem"];
   if (it.danger) c.push("appShellMenuItem--danger");
+  if (it.itemClass?.trim()) c.push(it.itemClass.trim());
   if (!it.actionOnly && it.id === props.modelValue) c.push("is-active");
   return c.join(" ");
 }
@@ -303,6 +350,7 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
                 <span
                   v-if="raw.prefixHtml"
                   class="appShellMenuItemPrefix"
+                  :class="raw.prefixWrapperClass"
                   aria-hidden="true"
                   v-html="raw.prefixHtml"
                 />
@@ -347,6 +395,7 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
                 <span
                   v-if="raw.prefixHtml"
                   class="appShellMenuItemPrefix"
+                  :class="raw.prefixWrapperClass"
                   aria-hidden="true"
                   v-html="raw.prefixHtml"
                 />
@@ -384,6 +433,7 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
                 <span
                   v-if="raw.prefixHtml"
                   class="appShellMenuItemPrefix"
+                  :class="raw.prefixWrapperClass"
                   aria-hidden="true"
                   v-html="raw.prefixHtml"
                 />
@@ -447,11 +497,12 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   box-sizing: border-box;
 }
 .customSelectTriggerLabelWithCount {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 0%;
+  overflow: hidden;
 }
 .customSelectTriggerPrefix {
   flex-shrink: 0;
@@ -471,6 +522,7 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   }
 }
 .customSelectTriggerLabel {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -510,5 +562,17 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
 /* 有纵向滚动条时：与轨道留出间距；无条时不加此类，左右与固定区一致 */
 .customSelectScroll--scrollbarPad {
   padding-right: 8px;
+}
+
+/** 与设置页 AI「拉取模型」按钮一致 */
+.customSelectPanel
+  :deep(.appShellMenuItemPrefix.customSelectMenuPrefixSpin svg) {
+  animation: customSelectIconSpin 0.65s linear infinite;
+}
+
+@keyframes customSelectIconSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

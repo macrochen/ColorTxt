@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, useTemplateRef } from "vue";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
-import {
-  BUILTIN_AI_SKILLS,
-  effectiveBuiltinSkill,
-} from "@shared/aiSkills";
+import { BUILTIN_AI_SKILLS, effectiveBuiltinSkill } from "@shared/aiSkills";
 import SettingsSkillEditModal, {
   type SkillEditModalMode,
 } from "./SettingsSkillEditModal.vue";
 import SwitchToggle from "./SwitchToggle.vue";
 import { icons } from "../icons";
+import { appConfirm } from "../services/appDialog";
 
 const enabled = defineModel<Record<string, boolean>>("enabled", {
   required: true,
@@ -29,6 +27,10 @@ const editInitialDescription = ref("");
 const editInitialPrompt = ref("");
 const editingBuiltinId = ref<string | null>(null);
 const editingCustomId = ref<string | null>(null);
+
+const skillsScrollAnchorEl = useTemplateRef<HTMLElement>(
+  "skillsScrollAnchorEl",
+);
 
 function skillOn(id: string): boolean {
   return enabled.value[id] !== false;
@@ -125,36 +127,45 @@ function onSkillModalSave(payload: {
       },
     ];
     enabled.value = { ...enabled.value, [id]: true };
+    void nextTick(() => {
+      requestAnimationFrame(() => {
+        skillsScrollAnchorEl.value?.scrollIntoView({
+          behavior: "smooth",
+          block: "end",
+        });
+      });
+    });
   }
 }
 
-function formatSkillTime(ts: number): string {
-  try {
-    return new Date(ts).toLocaleString(undefined, {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "";
+async function deleteCustomSkill(skill: AiCustomSkill) {
+  const ok = await appConfirm(
+    `确定删除技能「${skill.title}」吗？此操作不可撤销。`,
+    "删除技能",
+  );
+  if (!ok) return;
+  customSkills.value = customSkills.value.filter((s) => s.id !== skill.id);
+  const nextEnabled = { ...enabled.value };
+  delete nextEnabled[skill.id];
+  enabled.value = nextEnabled;
+  if (editingCustomId.value === skill.id) {
+    editOpen.value = false;
+    editingCustomId.value = null;
   }
 }
+
+defineExpose({
+  openCreateSkill,
+});
 </script>
 
 <template>
   <div class="settingsBody settingsBody--skills">
     <header class="skillsHeader">
-      <div class="skillsHeaderText">
-        <h2 class="skillsTitle">技能</h2>
-        <p class="skillsSubtitle">
-          管理 AI 工具扩展（后续可在对话中自动匹配启用项）
-        </p>
-      </div>
-      <button type="button" class="btn skillsAddBtn" @click="openCreateSkill">
-        + 添加技能
-      </button>
+      <p class="skillsTips">
+        管理提示词技能（启用的技能会在「AI
+        阅读助手」中注册为工具，由模型按需调用）
+      </p>
     </header>
 
     <div class="skillsGrid" role="list">
@@ -165,35 +176,29 @@ function formatSkillTime(ts: number): string {
         role="listitem"
       >
         <div class="skillCardTop">
-          <h3 class="skillCardTitle">{{ card.title }}</h3>
-          <button
-            type="button"
-            class="skillCardEdit"
-            title="编辑"
-            aria-label="编辑"
-            @click="openEditBuiltin(card.id)"
-          >
-            <span class="svg" v-html="icons.edit" />
-          </button>
+          <div class="skillCardTitleRow">
+            <h3 class="skillCardTitle" :title="card.title">{{ card.title }}</h3>
+            <span class="skillTag skillTag--builtin">内置</span>
+          </div>
+          <div class="skillCardActions">
+            <button
+              type="button"
+              class="skillCardIconBtn"
+              title="编辑"
+              aria-label="编辑"
+              @click="openEditBuiltin(card.id)"
+            >
+              <span class="svg" v-html="icons.edit" />
+            </button>
+            <SwitchToggle
+              size="sm"
+              :model-value="skillOn(card.id)"
+              :ariaLabel="`${card.title}，是否启用`"
+              @update:model-value="setSkill(card.id, $event)"
+            />
+          </div>
         </div>
         <p class="skillCardDesc">{{ card.description }}</p>
-        <div class="skillCardFoot">
-          <div class="skillCardTags">
-            <span class="skillTag skillTag--builtin">内置</span>
-            <span
-              class="skillTag"
-              :class="skillOn(card.id) ? 'skillTag--on' : 'skillTag--off'"
-            >
-              {{ skillOn(card.id) ? "已启用" : "未启用" }}
-            </span>
-          </div>
-          <SwitchToggle
-            size="sm"
-            :model-value="skillOn(card.id)"
-            :ariaLabel="`${card.title}，是否启用`"
-            @update:model-value="setSkill(card.id, $event)"
-          />
-        </div>
       </article>
 
       <article
@@ -203,30 +208,30 @@ function formatSkillTime(ts: number): string {
         role="listitem"
       >
         <div class="skillCardTop">
-          <h3 class="skillCardTitle">{{ skill.title }}</h3>
-          <button
-            type="button"
-            class="skillCardEdit"
-            title="编辑"
-            aria-label="编辑"
-            @click="openEditCustom(skill)"
-          >
-            <span class="svg" v-html="icons.edit" />
-          </button>
-        </div>
-        <p class="skillCardDesc">{{ skill.description }}</p>
-        <div class="skillCardFoot">
-          <div class="skillCardTags">
-            <span class="skillTag skillTag--custom">自定义</span>
-            <span
-              class="skillTag"
-              :class="skillOn(skill.id) ? 'skillTag--on' : 'skillTag--off'"
-            >
-              {{ skillOn(skill.id) ? "已启用" : "未启用" }}
-            </span>
+          <div class="skillCardTitleRow">
+            <h3 class="skillCardTitle" :title="skill.title">
+              {{ skill.title }}
+            </h3>
           </div>
-          <div class="skillCardFootEnd">
-            <span class="skillCardTime">{{ formatSkillTime(skill.createdAt) }}</span>
+          <div class="skillCardActions">
+            <button
+              type="button"
+              class="skillCardIconBtn skillCardIconBtn--danger"
+              title="删除"
+              aria-label="删除"
+              @click="deleteCustomSkill(skill)"
+            >
+              <span class="svg" v-html="icons.remove" />
+            </button>
+            <button
+              type="button"
+              class="skillCardIconBtn"
+              title="编辑"
+              aria-label="编辑"
+              @click="openEditCustom(skill)"
+            >
+              <span class="svg" v-html="icons.edit" />
+            </button>
             <SwitchToggle
               size="sm"
               :model-value="skillOn(skill.id)"
@@ -235,7 +240,14 @@ function formatSkillTime(ts: number): string {
             />
           </div>
         </div>
+        <p class="skillCardDesc">{{ skill.description }}</p>
       </article>
+
+      <div
+        ref="skillsScrollAnchorEl"
+        class="skillsScrollAnchor"
+        aria-hidden="true"
+      />
     </div>
 
     <SettingsSkillEditModal
@@ -256,34 +268,21 @@ function formatSkillTime(ts: number): string {
 }
 
 .skillsHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
   margin-bottom: 16px;
 }
 
-.skillsHeaderText {
-  min-width: 0;
-}
-
-.skillsTitle {
-  margin: 0 0 4px;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--fg);
-  line-height: 1.25;
-}
-
-.skillsSubtitle {
+.skillsTips {
   margin: 0;
   font-size: 12px;
   color: var(--muted);
   line-height: 1.45;
 }
 
-.skillsAddBtn {
-  flex-shrink: 0;
+.skillsScrollAnchor {
+  grid-column: 1 / -1;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .skillsGrid {
@@ -303,15 +302,24 @@ function formatSkillTime(ts: number): string {
   padding: 12px 12px 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--reader-bg, var(--panel)) 35%, var(--panel));
+  background: var(--bg);
 }
 
 .skillCardTop {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 8px;
+}
+
+.skillCardTitleRow {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .skillCardTitle {
@@ -320,9 +328,22 @@ function formatSkillTime(ts: number): string {
   font-weight: 700;
   color: var(--fg);
   line-height: 1.3;
+  min-width: 0;
+  /* 不占满整行，「内置」才能紧跟在省略后的技能名右侧 */
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.skillCardEdit {
+.skillCardActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.skillCardIconBtn {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
@@ -337,55 +358,32 @@ function formatSkillTime(ts: number): string {
   cursor: pointer;
 }
 
-.skillCardEdit:hover {
+.skillCardIconBtn:hover {
   color: var(--fg);
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
-.skillCardEdit .svg :deep(svg) {
+.skillCardIconBtn--danger:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.skillCardIconBtn .svg :deep(svg) {
   width: 15px;
   height: 15px;
   display: block;
 }
 
-.skillCardEdit .svg :deep(path) {
+.skillCardIconBtn .svg :deep(path) {
   fill: currentColor;
 }
 
 .skillCardDesc {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 12px;
   color: var(--muted);
   line-height: 1.5;
-  min-height: 3em;
-}
-
-.skillCardFoot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.skillCardFootEnd {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.skillCardTime {
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.skillCardTags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  min-height: 2em;
 }
 
 .skillTag {
@@ -394,25 +392,11 @@ function formatSkillTime(ts: number): string {
   padding: 3px 8px;
   border-radius: 999px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .skillTag--builtin {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--secondary);
-}
-
-.skillTag--custom {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-}
-
-.skillTag--on {
-  background: var(--fg);
-  color: var(--bg);
-}
-
-.skillTag--off {
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  color: var(--muted);
 }
 </style>

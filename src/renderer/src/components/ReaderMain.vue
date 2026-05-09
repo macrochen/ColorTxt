@@ -197,14 +197,6 @@ const emit = defineEmits<{
   viewportVisualProgressChange: [percent: number, atBottom: boolean];
   addHighlightTerm: [payload: { text: string; colorIndex: number }];
   removeHighlightTerm: [payload: { text: string }];
-  readerExtensionSelectionChange: [
-    payload: {
-      text: string;
-      startLine: number;
-      endLine: number;
-      isEmpty: boolean;
-    },
-  ];
 }>();
 
 const HL_TIP_H = 36;
@@ -1075,36 +1067,6 @@ function getModelLineCount(): number {
   return model.value?.getLineCount() ?? 0;
 }
 
-let extensionSelectionThrottleTimer: ReturnType<typeof setTimeout> | null =
-  null;
-
-function emitExtensionSelectionDebounced() {
-  if (extensionSelectionThrottleTimer != null) return;
-  extensionSelectionThrottleTimer = setTimeout(() => {
-    extensionSelectionThrottleTimer = null;
-    const e = editor.value;
-    const m = model.value;
-    if (!e || !m) {
-      emit("readerExtensionSelectionChange", {
-        text: "",
-        startLine: 1,
-        endLine: 1,
-        isEmpty: true,
-      });
-      return;
-    }
-    const sel = e.getSelection();
-    const isEmpty = !sel || sel.isEmpty();
-    const text = isEmpty ? "" : m.getValueInRange(sel);
-    emit("readerExtensionSelectionChange", {
-      text,
-      startLine: sel?.startLineNumber ?? 1,
-      endLine: sel?.endLineNumber ?? 1,
-      isEmpty,
-    });
-  }, 80);
-}
-
 /** 仅在右键落点落在当前选区内（或命中隐藏 textarea）时提供复制菜单，避免在选区外右键仍出现「复制」 */
 function contextMenuTargetInSelection(
   mouseEv: monaco.editor.IEditorMouseEvent,
@@ -1607,7 +1569,6 @@ onMounted(() => {
     });
     const d2 = e.onDidChangeCursorPosition(() => emitProbeLine(false));
     const dSel = e.onDidChangeCursorSelection(() => {
-      emitExtensionSelectionDebounced();
       if (Date.now() < suppressHighlightTipUntilMs) {
         closeHighlightFloatUi();
         return;

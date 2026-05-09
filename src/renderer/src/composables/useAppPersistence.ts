@@ -1,4 +1,11 @@
-import { ref, shallowRef, watch, triggerRef, type Ref, type ShallowRef } from "vue";
+import {
+  ref,
+  shallowRef,
+  watch,
+  triggerRef,
+  type Ref,
+  type ShallowRef,
+} from "vue";
 import type { RecentFileItem } from "../components/AppHeader.vue";
 import type ReaderMain from "../components/ReaderMain.vue";
 import {
@@ -159,10 +166,12 @@ export function useAppPersistence(deps: {
   fileListEditing: Ref<boolean>;
   /** 监控当前打开文件，磁盘变更后自动重新加载 */
   syncCurrentFile: Ref<boolean>;
-  /** ReadAny 风格内置 AI 技能启用状态 */
+  /** 内置 AI 技能启用状态 */
   aiSkillsEnabled: Ref<Record<string, boolean>>;
   aiSkillOverrides: Ref<Record<string, AiSkillUserOverride>>;
   aiCustomSkills: Ref<AiCustomSkill[]>;
+  aiAssistantDeepThinking: Ref<boolean>;
+  aiAssistantSpoilerSafe: Ref<boolean>;
 }) {
   const settingsLoaded = ref(false);
   let storageSyncBound = false;
@@ -319,13 +328,20 @@ export function useAppPersistence(deps: {
       // clear()：按当前配置保留既有加载流程，做最小必要重载
       loadRecentFiles();
       loadFileMeta();
-      deps.txtFiles.value = loadTxtFileListSnapshot(window.localStorage, fileListKey);
+      deps.txtFiles.value = loadTxtFileListSnapshot(
+        window.localStorage,
+        fileListKey,
+      );
       return;
     }
     if (ev.key === fileListKey) {
-      deps.txtFiles.value = loadTxtFileListSnapshot(window.localStorage, fileListKey);
+      deps.txtFiles.value = loadTxtFileListSnapshot(
+        window.localStorage,
+        fileListKey,
+      );
       try {
-        lastPersistedTxtFilesJson = window.localStorage.getItem(fileListKey) ?? "";
+        lastPersistedTxtFilesJson =
+          window.localStorage.getItem(fileListKey) ?? "";
       } catch {
         lastPersistedTxtFilesJson = "";
       }
@@ -392,7 +408,8 @@ export function useAppPersistence(deps: {
       opts?.editorViewState !== undefined
         ? opts.editorViewState
         : deps.currentFile.value === path
-          ? deps.readerRef.value?.getSerializedEditorViewState?.() ?? undefined
+          ? (deps.readerRef.value?.getSerializedEditorViewState?.() ??
+            undefined)
           : undefined;
     const viewState: PersistedEditorViewState | undefined =
       viewStateRaw != null &&
@@ -433,10 +450,7 @@ export function useAppPersistence(deps: {
         if (viewportTopPhysicalLine !== undefined) {
           prev.viewportTopPhysicalLine = viewportTopPhysicalLine;
         }
-        if (
-          opts?.rebuildProgressMap === true &&
-          typeof progress === "number"
-        ) {
+        if (opts?.rebuildProgressMap === true && typeof progress === "number") {
           rebuildMetaProgressMap();
         }
       } else if (typeof progress === "number" || viewState !== undefined) {
@@ -552,7 +566,9 @@ export function useAppPersistence(deps: {
     persistRecentFiles();
   }
 
-  function loadPersistedSettings(): { ebookConvertOutputDirKeyPresent: boolean } {
+  function loadPersistedSettings(): {
+    ebookConvertOutputDirKeyPresent: boolean;
+  } {
     const loaded = loadPersistedSettingsData(
       typeof window !== "undefined" ? window.localStorage : undefined,
       persistKey,
@@ -564,7 +580,10 @@ export function useAppPersistence(deps: {
 
     if (data.theme) deps.currentTheme.value = data.theme;
 
-    if (typeof data.sidebarWidth === "number" && Number.isFinite(data.sidebarWidth)) {
+    if (
+      typeof data.sidebarWidth === "number" &&
+      Number.isFinite(data.sidebarWidth)
+    ) {
       deps.sidebarWidth.value = Math.max(0, Math.floor(data.sidebarWidth));
     }
 
@@ -642,10 +661,7 @@ export function useAppPersistence(deps: {
     ) {
       deps.chapterMinCharCount.value = Math.max(
         minChapterMinCharCount,
-        Math.min(
-          maxChapterMinCharCount,
-          Math.floor(data.chapterMinCharCount),
-        ),
+        Math.min(maxChapterMinCharCount, Math.floor(data.chapterMinCharCount)),
       );
     } else {
       deps.chapterMinCharCount.value = defaultChapterMinCharCount;
@@ -669,7 +685,8 @@ export function useAppPersistence(deps: {
         ),
       );
     } else {
-      deps.fullscreenReaderWidthPercent.value = defaultFullscreenReaderWidthPercent;
+      deps.fullscreenReaderWidthPercent.value =
+        defaultFullscreenReaderWidthPercent;
     }
     deps.shortcutBindings.value = mergeShortcutBindings(
       deps.defaultShortcutBindings,
@@ -730,6 +747,13 @@ export function useAppPersistence(deps: {
       data.aiSkillsEnabled,
       customIds,
     );
+
+    if (typeof data.aiAssistantDeepThinking === "boolean") {
+      deps.aiAssistantDeepThinking.value = data.aiAssistantDeepThinking;
+    }
+    if (typeof data.aiAssistantSpoilerSafe === "boolean") {
+      deps.aiAssistantSpoilerSafe.value = data.aiAssistantSpoilerSafe;
+    }
 
     return { ebookConvertOutputDirKeyPresent };
   }
@@ -797,6 +821,8 @@ export function useAppPersistence(deps: {
         deps.aiCustomSkills.value.length > 0
           ? deps.aiCustomSkills.value
           : undefined,
+      aiAssistantDeepThinking: deps.aiAssistantDeepThinking.value,
+      aiAssistantSpoilerSafe: deps.aiAssistantSpoilerSafe.value,
     });
   }
 

@@ -40,7 +40,7 @@ const draftMaxLineHeightMultiple = computed(() =>
   <div class="settingsBody">
     <div class="settingsRow">
       <div class="settingsRowMain">
-        <span class="settingsLabel">字号（{{ draftFontSize }} px）</span>
+        <span class="settingsLabel short">字号（{{ draftFontSize }} px）</span>
         <RangeSlider
           :model-value="draftFontSize"
           :min="minFontSize"
@@ -55,7 +55,7 @@ const draftMaxLineHeightMultiple = computed(() =>
 
     <div class="settingsRow">
       <div class="settingsRowMain">
-        <span class="settingsLabel"
+        <span class="settingsLabel short"
           >行高（{{ draftLineHeightMultiple.toFixed(1) }}）</span
         >
         <RangeSlider
@@ -119,7 +119,7 @@ const draftMaxLineHeightMultiple = computed(() =>
 
     <div class="settingsRow">
       <div class="settingsRowMain">
-        <span class="settingsLabel"
+        <span class="settingsLabel short"
           >全屏阅读区域宽度（{{ draftFullscreenReaderWidthPercent }}%）</span
         >
         <RangeSlider
@@ -170,6 +170,10 @@ const draftMaxLineHeightMultiple = computed(() =>
   color: var(--fg);
   flex: 1 1 60%;
   min-width: 60%;
+}
+.settingsLabel.short {
+  flex: 1 1 30%;
+  min-width: 30%;
 }
 
 .settingsHint {

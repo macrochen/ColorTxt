@@ -1,7 +1,9 @@
 /**
- * 内置 AI 技能默认文案：与 ReadAny 导出一致（全量同步自「技能.md」）。
+ * 内置 AI 技能默认文案。
  * `prompt` 用于后续对话注入；改版前请先用竞品导出对照。
  */
+
+import type { AIAgentEnabledSkill } from "./aiTypes";
 
 export type AiBuiltinSkill = {
   id: string;
@@ -478,7 +480,7 @@ export function isBuiltinSkillId(id: string): boolean {
   return skillIdsSet().has(id);
 }
 
-/** 默认全部启用（与 ReadAny「已启用」初始态一致） */
+/** 默认全部启用 */
 export function defaultAiSkillsEnabled(): Record<string, boolean> {
   const o: Record<string, boolean> = {};
   for (const s of BUILTIN_AI_SKILLS) {
@@ -565,6 +567,38 @@ export function effectiveBuiltinSkill(
  * 合并启用状态：内置 id + 自定义技能 id；
  * `stored` 中含未知 id 且出现在 customSkillIds 中的也会保留。
  */
+/**
+ * 合并内置与自定义技能，得到当前启用且供 Agent 使用的快照（供 IPC 传入主进程）。
+ * `enabled[id] === false` 视为关闭；缺省视为开启。
+ */
+export function collectEnabledAgentSkills(
+  enabled: Record<string, boolean>,
+  overrides: Record<string, AiSkillUserOverride>,
+  custom: readonly AiCustomSkill[],
+): AIAgentEnabledSkill[] {
+  const out: AIAgentEnabledSkill[] = [];
+  for (const def of BUILTIN_AI_SKILLS) {
+    if (enabled[def.id] === false) continue;
+    const eff = effectiveBuiltinSkill(def, overrides[def.id]);
+    out.push({
+      id: def.id,
+      title: def.title,
+      description: eff.description,
+      prompt: eff.prompt,
+    });
+  }
+  for (const c of custom) {
+    if (enabled[c.id] === false) continue;
+    out.push({
+      id: c.id,
+      title: c.title,
+      description: c.description,
+      prompt: c.prompt,
+    });
+  }
+  return out;
+}
+
 export function mergeAiSkillsEnabled(
   stored: Record<string, boolean> | undefined | null,
   customSkillIds: readonly string[] = [],

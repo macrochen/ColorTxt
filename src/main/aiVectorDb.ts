@@ -13,6 +13,38 @@ function dbPath(): string {
   return path.join(app.getPath("userData"), "ai", "vector.sqlite");
 }
 
+function migrateMessagesForAgent(database: Database.Database) {
+  const rows = database
+    .prepare(`PRAGMA table_info(messages)`)
+    .all() as Array<{ name: string }>;
+  const set = new Set(rows.map((r) => r.name));
+  const addCol = (col: string, ddl: string) => {
+    if (!set.has(col)) {
+      database.exec(ddl);
+      set.add(col);
+    }
+  };
+  addCol("tool_call_id", `ALTER TABLE messages ADD COLUMN tool_call_id TEXT`);
+  addCol("tool_name", `ALTER TABLE messages ADD COLUMN tool_name TEXT`);
+  addCol(
+    "tool_calls_json",
+    `ALTER TABLE messages ADD COLUMN tool_calls_json TEXT`,
+  );
+  addCol("payload", `ALTER TABLE messages ADD COLUMN payload TEXT`);
+}
+
+function migrateThreadsTitleLocked(database: Database.Database) {
+  const rows = database
+    .prepare(`PRAGMA table_info(threads)`)
+    .all() as Array<{ name: string }>;
+  const set = new Set(rows.map((r) => r.name));
+  if (!set.has("title_locked")) {
+    database.exec(
+      `ALTER TABLE threads ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+}
+
 function createBaseTables(database: Database.Database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS ai_meta (
@@ -120,6 +152,8 @@ export function openOrRecreateAiVectorDb(embeddingDim: number): Database.Databas
   database.pragma("foreign_keys = ON");
 
   createBaseTables(database);
+  migrateMessagesForAgent(database);
+  migrateThreadsTitleLocked(database);
   database.loadExtension(resolveSqliteVecLoadPath());
   ensureVecLayer(database, embeddingDim);
 
@@ -152,6 +186,8 @@ export function resetEmbeddingDimension(newDim: number): void {
   database.pragma("foreign_keys = ON");
 
   createBaseTables(database);
+  migrateMessagesForAgent(database);
+  migrateThreadsTitleLocked(database);
   database.loadExtension(resolveSqliteVecLoadPath());
   dropVecTables(database);
   createVecTables(database, newDim);
@@ -232,18 +268,26 @@ export function searchChunks(
 ): AIIndexSearchHit[] {
   const database = getAiVectorDb();
   const q = new Float32Array(queryEmbedding);
+  /** vec0 KNN 必须在 MATCH 上使用 `k = ?`；与 id_mapping JOIN 时外层 LIMIT 无法下推，会报错（见 sqlite-vec #96）。先全局取足够多的近邻，再按书过滤。 */
+  const knnCap = Math.min(2048, Math.max(64, topK * 40));
   const rows = database
     .prepare(
       `
-      SELECT m.chunk_id AS chunkId, v.distance AS distance
-      FROM vec_embeddings v
-      JOIN id_mapping m ON v.rowid = m.rowid
-      WHERE v.embedding MATCH ? AND m.book_hash = ?
-      ORDER BY v.distance
+      WITH knn_matches AS (
+        SELECT v.rowid AS rowid, v.distance AS distance
+        FROM vec_embeddings v
+        WHERE v.embedding MATCH ?
+          AND k = ?
+      )
+      SELECT m.chunk_id AS chunkId, knn_matches.distance AS distance
+      FROM knn_matches
+      INNER JOIN id_mapping m
+        ON knn_matches.rowid = m.rowid AND m.book_hash = ?
+      ORDER BY knn_matches.distance
       LIMIT ?
     `,
     )
-    .all(q, bookHash, topK) as { chunkId: string; distance: number }[];
+    .all(q, knnCap, bookHash, topK) as { chunkId: string; distance: number }[];
 
   if (rows.length === 0) return [];
 
@@ -277,11 +321,40 @@ export function searchChunks(
   return hits;
 }
 
+export type ChapterChunkRow = {
+  chunkId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  content: string;
+  charStart: number;
+  charEnd: number;
+};
+
+/** 按阅读顺序列出某章全部分块（不含向量） */
+export function listChunksForChapter(
+  bookHash: string,
+  chapterIndex: number,
+): ChapterChunkRow[] {
+  const database = getAiVectorDb();
+  const rows = database
+    .prepare(
+      `SELECT id AS chunkId, chapter_index AS chapterIndex, chapter_title AS chapterTitle,
+              content, char_start AS charStart, char_end AS charEnd
+       FROM chunks
+       WHERE book_hash = ? AND chapter_index = ?
+       ORDER BY char_start ASC`,
+    )
+    .all(bookHash, chapterIndex) as ChapterChunkRow[];
+  return rows;
+}
+
 export function listThreads(bookHash: string) {
   const database = getAiVectorDb();
   return database
     .prepare(
-      `SELECT id, book_hash AS bookHash, title, created_at AS createdAt, updated_at AS updatedAt
+      `SELECT id, book_hash AS bookHash, title,
+              created_at AS createdAt, updated_at AS updatedAt,
+              title_locked AS titleLocked
        FROM threads WHERE book_hash = ? ORDER BY updated_at DESC`,
     )
     .all(bookHash) as Array<{
@@ -290,6 +363,7 @@ export function listThreads(bookHash: string) {
       title: string;
       createdAt: number;
       updatedAt: number;
+      titleLocked: number;
     }>;
 }
 
@@ -305,11 +379,25 @@ export function createThread(bookHash: string, title: string): string {
   return id;
 }
 
-export function renameThread(threadId: string, title: string): void {
+/** userChosen：用户手动改名时置 title_locked，不再按首条消息自动起名 */
+export function renameThread(
+  threadId: string,
+  title: string,
+  userChosen = false,
+): void {
   const database = getAiVectorDb();
-  database
-    .prepare(`UPDATE threads SET title = ?, updated_at = ? WHERE id = ?`)
-    .run(title, Date.now(), threadId);
+  const now = Date.now();
+  if (userChosen) {
+    database
+      .prepare(
+        `UPDATE threads SET title = ?, updated_at = ?, title_locked = 1 WHERE id = ?`,
+      )
+      .run(title, now, threadId);
+  } else {
+    database
+      .prepare(`UPDATE threads SET title = ?, updated_at = ? WHERE id = ?`)
+      .run(title, now, threadId);
+  }
 }
 
 export function touchThread(threadId: string): void {
@@ -328,7 +416,8 @@ export function listMessages(threadId: string) {
   const database = getAiVectorDb();
   return database
     .prepare(
-      `SELECT id, thread_id AS threadId, role, content, created_at AS createdAt, aborted AS abortedNum
+      `SELECT id, thread_id AS threadId, role, content, created_at AS createdAt, aborted AS abortedNum,
+              tool_call_id AS toolCallId, tool_name AS toolName, tool_calls_json AS toolCallsJson, payload AS payload
        FROM messages WHERE thread_id = ? ORDER BY created_at ASC`,
     )
     .all(threadId) as Array<{
@@ -338,6 +427,10 @@ export function listMessages(threadId: string) {
       content: string;
       createdAt: number;
       abortedNum: number;
+      toolCallId: string | null;
+      toolName: string | null;
+      toolCallsJson: string | null;
+      payload: string | null;
     }>;
 }
 
@@ -347,14 +440,44 @@ export function appendMessage(
   content: string,
   aborted = false,
 ): string {
+  return appendAgentMessageRow({
+    threadId,
+    role,
+    content,
+    aborted,
+  });
+}
+
+export function appendAgentMessageRow(opts: {
+  threadId: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  aborted?: boolean;
+  toolCallId?: string | null;
+  toolName?: string | null;
+  toolCallsJson?: string | null;
+  payload?: string | null;
+}): string {
   const database = getAiVectorDb();
   const id = crypto.randomUUID();
   const now = Date.now();
   database
     .prepare(
-      `INSERT INTO messages (id, thread_id, role, content, created_at, aborted) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, thread_id, role, content, created_at, aborted, tool_call_id, tool_name, tool_calls_json, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, threadId, role, content, now, aborted ? 1 : 0);
-  touchThread(threadId);
+    .run(
+      id,
+      opts.threadId,
+      opts.role,
+      opts.content,
+      now,
+      opts.aborted ? 1 : 0,
+      opts.toolCallId ?? null,
+      opts.toolName ?? null,
+      opts.toolCallsJson ?? null,
+      opts.payload ?? null,
+    );
+  touchThread(opts.threadId);
   return id;
 }

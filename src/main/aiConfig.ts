@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   type AIConfig,
   defaultAIConfig,
+  normalizeAiQuickQuestions,
 } from "@shared/aiTypes";
 
 const CONFIG_REL = ["ai", "config.json"];
@@ -23,6 +24,9 @@ export function mergeAiConfigWithDefaults(raw: unknown): AIConfig {
   if (o.embedding && typeof o.embedding === "object") {
     Object.assign(base.embedding, o.embedding as object);
   }
+  if (typeof o.embeddingEnabled === "boolean") {
+    base.embeddingEnabled = o.embeddingEnabled;
+  }
   for (const k of [
     "chunkTargetTokens",
     "chunkMinTokens",
@@ -33,6 +37,7 @@ export function mergeAiConfigWithDefaults(raw: unknown): AIConfig {
       (base as unknown as Record<string, number>)[k] = o[k] as number;
     }
   }
+  base.quickQuestions = normalizeAiQuickQuestions(o.quickQuestions);
   return base;
 }
 

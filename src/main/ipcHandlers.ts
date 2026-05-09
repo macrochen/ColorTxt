@@ -30,7 +30,6 @@ import { EBOOK_DOT_EXTENSIONS } from "@shared/ebookExtensions";
 import { APP_DISPLAY_NAME } from "@shared/packageDerived";
 import type { CreateMainWindow } from "./windowFactory";
 import { registerLocalFileForColortxtUrl } from "./colortxtLocalProtocol";
-import { setReaderThemeIdForExtensionHtml } from "./extensionProtocol";
 import {
   getToggleVisibilityShortcut,
   resumeGlobalShortcutsAfterRecording,
@@ -38,14 +37,6 @@ import {
   suspendGlobalShortcutsForRecording,
   validateGlobalShortcut,
 } from "./globalShortcuts";
-import { refreshExtensionProtocolRoots } from "./extensionProtocol";
-import {
-  getDevExtensionPaths,
-  installExtensionFromCtix,
-  listAllExtensionRows,
-  setExtensionEnabled,
-  uninstallUserExtension,
-} from "./extensionService";
 import { registerAiIpcHandlers } from "./registerAiIpc";
 
 type TxtFileItem = { name: string; path: string; size: number };
@@ -720,7 +711,6 @@ export function registerMainIpcHandlers(
 
   ipcMain.on("theme:set", (_evt, theme: string) => {
     if (theme !== "vs" && theme !== "vs-dark") return;
-    setReaderThemeIdForExtensionHtml(theme);
     const isLight = theme === "vs";
     nativeTheme.themeSource = isLight ? "light" : "dark";
     const bg = isLight ? "#ffffff" : "#1e1e1e";
@@ -851,97 +841,6 @@ export function registerMainIpcHandlers(
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  });
-
-  ipcMain.handle("dialog:openCtix", async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender);
-    const opts: Electron.OpenDialogOptions = {
-      properties: ["openFile"],
-      filters: [
-        { name: "ColorTxt 扩展", extensions: ["ctix", "zip"] },
-        { name: "所有文件", extensions: ["*"] },
-      ],
-    };
-    const res = win
-      ? await dialog.showOpenDialog(win, opts)
-      : await dialog.showOpenDialog(opts);
-    if (res.canceled || res.filePaths.length === 0) return null;
-    return res.filePaths[0];
-  });
-
-  ipcMain.handle("extension:list", async () => {
-    const rows = await listAllExtensionRows();
-    return rows.map((r) => ({
-      name: r.name,
-      displayName: r.displayName,
-      description: r.description,
-      version: r.version,
-      builtin: r.builtin,
-      dev: r.dev,
-      enabled: r.enabled,
-      rootFsPath: r.rootFsPath,
-      manifest: r.manifest,
-      views: r.views,
-    }));
-  });
-
-  ipcMain.handle(
-    "extension:installFromCtix",
-    async (_evt, filePath: unknown) => {
-      if (typeof filePath !== "string" || !filePath.trim()) {
-        return { ok: false as const, error: "无效路径" };
-      }
-      const r = await installExtensionFromCtix(filePath.trim());
-      if (r.ok) await refreshExtensionProtocolRoots();
-      return r;
-    },
-  );
-
-  ipcMain.handle("extension:uninstall", async (_evt, name: unknown) => {
-    if (typeof name !== "string" || !name.trim()) {
-      return { ok: false as const, error: "无效 id" };
-    }
-    const r = await uninstallUserExtension(name.trim());
-    if (r.ok) await refreshExtensionProtocolRoots();
-    return r;
-  });
-
-  ipcMain.handle(
-    "extension:setEnabled",
-    async (
-      _evt,
-      payload: unknown,
-    ): Promise<{ ok: true } | { ok: false; error: string }> => {
-      if (!payload || typeof payload !== "object") {
-        return { ok: false, error: "无效参数" };
-      }
-      const p = payload as {
-        name?: string;
-        enabled?: boolean;
-        builtin?: boolean;
-      };
-      if (typeof p.name !== "string" || !p.name.trim()) {
-        return { ok: false, error: "无效 name" };
-      }
-      if (typeof p.enabled !== "boolean") {
-        return { ok: false, error: "无效 enabled" };
-      }
-      if (typeof p.builtin !== "boolean") {
-        return { ok: false, error: "无效 builtin" };
-      }
-      await setExtensionEnabled(p.name.trim(), p.enabled, p.builtin);
-      await refreshExtensionProtocolRoots();
-      return { ok: true };
-    },
-  );
-
-  ipcMain.handle("extension:getDevPaths", () =>
-    [...getDevExtensionPaths()],
-  );
-
-  ipcMain.handle("extension:refreshRoots", async () => {
-    await refreshExtensionProtocolRoots();
-    return { ok: true as const };
   });
 
   registerAiIpcHandlers();

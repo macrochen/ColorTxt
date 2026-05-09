@@ -8,7 +8,7 @@ import {
   mergeTxtFileLists,
   type TxtFileItem,
 } from "../services/fileListService";
-import { appAlert } from "../services/appAlert";
+import { appAlert } from "../services/appDialog";
 import { prepareOpenFile } from "../services/fileOpenService";
 import { loadSessionSnapshot } from "../stores/cacheStore";
 import { useAppPersistence } from "./useAppPersistence";

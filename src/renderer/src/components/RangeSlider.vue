@@ -72,8 +72,8 @@ function onChange(ev: Event) {
 .rangeSlider {
   width: 100%;
   min-width: 80px;
-  max-width: 220px;
-  flex: 1 1 140px;
+  /* flex: 1 1 140px; */
+  flex: 1 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 10px;

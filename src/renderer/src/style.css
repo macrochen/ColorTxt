@@ -192,7 +192,7 @@ body,
   flex-shrink: 0;
   transition: 0.1s;
 }
-.btn:hover,
+.btn:hover:not(:disabled),
 .btn.active {
   color: var(--accent);
   border-color: var(--accent);
@@ -520,8 +520,17 @@ textarea:focus {
   color: var(--success);
 }
 
-.appShellMenuItem--success:hover:not(:disabled) {
+.appShellMenuItem.appShellMenuItem--success:hover:not(:disabled) {
   background: var(--success-bg);
+  color: var(--success);
+}
+
+.appShellMenuItem--success .appShellMenuItemPrefix svg path {
+  fill: currentColor;
+}
+
+.appShellMenuItem--danger .appShellMenuItemPrefix svg path {
+  fill: currentColor;
 }
 
 .appShellMenuItem--warning {
@@ -555,6 +564,7 @@ textarea:focus {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
+  margin-top: 2px;
 }
 
 .appShellMenuItemLabelText {

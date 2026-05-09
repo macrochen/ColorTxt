@@ -21,6 +21,7 @@ export type EmbeddingEndpointCore = Pick<
 async function postEmbeddingOnce(
   endpoint: EmbeddingEndpointCore,
   batch: string[],
+  signal?: AbortSignal,
 ): Promise<number[][]> {
   if (batch.length === 0) return [];
 
@@ -51,6 +52,7 @@ async function postEmbeddingOnce(
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {
@@ -97,13 +99,19 @@ export async function probeEmbeddingDimension(
 export async function embedTexts(
   endpoint: AIEmbeddingEndpoint,
   texts: string[],
+  signal?: AbortSignal,
 ): Promise<number[][]> {
   const batchSize = 20;
   const all: number[][] = [];
 
   for (let i = 0; i < texts.length; i += batchSize) {
+    if (signal?.aborted) {
+      const e = new Error("Aborted");
+      e.name = "AbortError";
+      throw e;
+    }
     const batch = texts.slice(i, i + batchSize);
-    const part = await postEmbeddingOnce(endpoint, batch);
+    const part = await postEmbeddingOnce(endpoint, batch, signal);
     all.push(...part);
   }
 

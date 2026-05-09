@@ -75,7 +75,7 @@ defineEmits<{
 
     <div class="settingsRow">
       <div class="settingsRowMain settingsRowMain--baseline">
-        <span class="settingsLabel small">电子书转换缓存目录</span>
+        <span class="settingsLabel short">电子书转换缓存目录</span>
         <div class="settingsEbookDirActions">
           <PathPickerInput
             :model-value="draftEbookConvertOutputDir"
@@ -180,9 +180,9 @@ defineEmits<{
   flex: 1 1 60%;
   min-width: 60%;
 }
-.settingsLabel.small {
-  flex: 1 1 35%;
-  min-width: 35%;
+.settingsLabel.short {
+  flex: 1 1 30%;
+  min-width: 30%;
 }
 
 .settingsHint {

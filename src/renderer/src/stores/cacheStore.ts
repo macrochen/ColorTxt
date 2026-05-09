@@ -85,6 +85,10 @@ export type PersistedSettingsData = {
   aiSkillOverrides?: Record<string, AiSkillUserOverride>;
   /** 用户自定义技能列表 */
   aiCustomSkills?: AiCustomSkill[];
+  /** AI 阅读助手：深度思考 */
+  aiAssistantDeepThinking?: boolean;
+  /** AI 阅读助手：防剧透 */
+  aiAssistantSpoilerSafe?: boolean;
 };
 
 export type PersistedSettingsLoadResult = {
@@ -276,6 +280,13 @@ export function loadPersistedSettingsData(
         ? (obj.aiSkillsEnabled as Record<string, boolean>)
         : undefined;
     data.aiSkillsEnabled = mergeAiSkillsEnabled(enabledRaw, customSkillIds);
+  }
+
+  if (typeof obj.aiAssistantDeepThinking === "boolean") {
+    data.aiAssistantDeepThinking = obj.aiAssistantDeepThinking;
+  }
+  if (typeof obj.aiAssistantSpoilerSafe === "boolean") {
+    data.aiAssistantSpoilerSafe = obj.aiAssistantSpoilerSafe;
   }
 
   return { data, ebookConvertOutputDirKeyPresent };

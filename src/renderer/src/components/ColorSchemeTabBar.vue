@@ -39,7 +39,6 @@ const emit = defineEmits<{
 .colorSchemeTabBar {
   flex-shrink: 0;
   margin-bottom: 0;
-  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
 

@@ -5,7 +5,7 @@ import {
   collectFsPathsFromDataTransfer,
   dataTransferLikelyHasExternalFiles,
 } from "../utils/dragDropFsPaths";
-import { appAlert } from "../services/appAlert";
+import { appAlert } from "../services/appDialog";
 import { bindAppShortcuts } from "../services/shortcutService";
 import { hasModalOnStack } from "../utils/modalStack";
 import { useAppFileSession } from "./useAppFileSession";

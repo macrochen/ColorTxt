@@ -5,30 +5,70 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
+  shallowRef,
   useTemplateRef,
   watch,
 } from "vue";
 import type ReaderMain from "./ReaderMain.vue";
 import type { Chapter } from "../chapter";
 import { pickActiveChapterIdx } from "../reader/chapterIndex";
-import type { AIChatStreamPayload, AIIndexSearchHit } from "@shared/aiTypes";
+import type { AIAgentRendererEvent } from "@shared/aiTypes";
+import { normalizeAiQuickQuestions } from "@shared/aiTypes";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
+import { collectEnabledAgentSkills } from "@shared/aiSkills";
 import { chunkNovelForAi } from "../utils/aiChunkBook";
 import { hashBookBrowser } from "../utils/aiBookHash";
-import { getCurrentChapterPlainText } from "../utils/currentChapterPlainText";
+import {
+  getReaderSurroundingPlainText,
+  READER_SURROUNDING_DEFAULT_MAX_CHARS,
+} from "../utils/readerSurroundingPlainText";
 import { dirnameFs, joinFs } from "../ebook/pathUtils";
-import AiMarkdown from "./AiMarkdown.vue";
+import AiAssistantChatMessages from "./AiAssistantChatMessages.vue";
+import { rowsToUiMessages } from "../aiAssistant/aiAssistantDbMessages";
+import {
+  buildChatExportDefaultName,
+  buildAssistantChatExportJson,
+  buildAssistantChatExportMarkdown,
+  resolveExportThreadTitle,
+} from "../aiAssistant/aiAssistantExport";
+import {
+  formatHistoryGroupLabel,
+  formatThreadListTime,
+  localDayKey,
+} from "../aiAssistant/aiAssistantHistoryFormat";
+import { assistantPlainText } from "../aiAssistant/aiAssistantPlainText";
+import {
+  appendReasoningDelta,
+  buildSkillToolDisplayLabels,
+  finalizeLiveThinkingAfterStop,
+  sealLiveThinkingBeforeTool,
+} from "../aiAssistant/aiAssistantSegments";
+import type {
+  AiHistoryThreadGroup,
+  AiThreadListRow,
+  UiMsg,
+} from "../aiAssistant/aiAssistantTypes";
 import AppCustomSelect, { type CustomSelectItem } from "./AppCustomSelect.vue";
 import { icons } from "../icons";
+import { appAlert } from "../services/appDialog";
+
+/** 导出对话下拉菜单固定宽度（与内容版式一致，不作视口/触发器推算） */
+const AI_EXPORT_MENU_WIDTH_PX = 210;
 
 const selectListsEmpty: CustomSelectItem[] = [];
 
-type UiMsg = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  aborted?: boolean;
-  createdAt?: number;
-};
+const LIST_STICK_BOTTOM_PX = 48;
+
+/** 「回到底部」自定义平滑滚动：路程越长略久，并夹在区间内（原生 smooth 无法调速度） */
+const AI_CHAT_SMOOTH_SCROLL_MIN_MS = 200;
+const AI_CHAT_SMOOTH_SCROLL_MAX_MS = 1100;
+/** 滚动快慢：数值越大同样路程耗时越短（像素/秒） */
+const AI_CHAT_SMOOTH_SCROLL_SPEED_PX_PER_SEC = 3200;
+
+function easeOutCubic(t: number): number {
+  const u = 1 - t;
+  return 1 - u * u * u;
+}
 
 const props = defineProps<{
   sessionFilePath: string | null;
@@ -36,6 +76,15 @@ const props = defineProps<{
   chapters: Chapter[];
   activeChapterIdx: number;
   readerMainRef: InstanceType<typeof ReaderMain> | null;
+  /**
+   * 侧栏当前是否停留在「AI 阅读助手」页（与 `v-show` 一致）。
+   * 未传时视为 true（兼容旧用法）；隐藏时会话加载后的贴底滚动推迟到可见时补一次，不会因单纯切换 Tab 而重复滚底。
+   */
+  assistantPanelVisible?: boolean;
+  /** 设置 → 技能（未传则按「全部内置启用、无自定义」收集） */
+  aiSkillsEnabled?: Record<string, boolean>;
+  aiSkillOverrides?: Record<string, AiSkillUserOverride>;
+  aiCustomSkills?: AiCustomSkill[];
 }>();
 
 const emit = defineEmits<{
@@ -47,19 +96,124 @@ const threadId = ref<string | null>(null);
 const messages = ref<UiMsg[]>([]);
 const input = ref("");
 const streaming = ref(false);
+/** 从发送后到收到完成/错误：含索引、检索与等待首 token */
+const chatAwaitingReply = ref(false);
 const activeRequestId = ref(0);
-const deepThinking = ref(false);
-const spoilerSafe = ref(false);
+const deepThinking = defineModel<boolean>("deepThinking", { default: false });
+const spoilerSafe = defineModel<boolean>("spoilerSafe", { default: false });
 const historyOpen = ref(false);
 const chatModelOptions = ref<string[]>([]);
 const chatModelsLoading = ref(false);
+/** 侧栏模型下拉「拉取模型」：加载 / 成功闪绿 / 失败 danger */
+const composerPullModelsPhase = ref<"idle" | "loading" | "success" | "fail">(
+  "idle",
+);
+let composerPullModelsSuccessTimer: ReturnType<typeof setTimeout> | null = null;
 /** 与设置里保存的 `chat.model` 对齐，用于判断是否传 `chatModelOverride` */
 const savedConfigModel = ref("");
 const activeChatModel = ref("");
 const showJumpBottom = ref(false);
-const threads = ref<Array<{ id: string; title: string; updatedAt: number }>>(
-  [],
+/** 平滑滚到底部进行中：勿根据 scroll 更新「回到底部」显隐，避免 dist 反复越过阈值闪烁 */
+const jumpBottomRevealSuppressed = ref(false);
+/** 聊天列表是否在底部附近；仅在为 true 时随流式更新自动滚到底 */
+const listStickBottom = ref(true);
+/**
+ * 会话列表在隐藏面板内加载完成时无法滚到底（clientHeight 为 0），待面板可见后补一次；
+ * 不为「每次切换到 AI Tab」而设，仅服务于加载消息后的贴底。
+ */
+const pendingScrollToBottomAfterVisible = ref(false);
+
+const assistantTabEffectiveVisible = computed(
+  () => props.assistantPanelVisible ?? true,
 );
+
+const skillToolDisplayLabels = computed(() =>
+  buildSkillToolDisplayLabels(props.aiCustomSkills ?? []),
+);
+
+let jumpBottomSmoothDoneTimer: number | null = null;
+let jumpBottomSmoothRafId: number | null = null;
+
+function cancelJumpBottomSmoothRaf() {
+  if (jumpBottomSmoothRafId != null) {
+    cancelAnimationFrame(jumpBottomSmoothRafId);
+    jumpBottomSmoothRafId = null;
+  }
+}
+
+/** 列表容器平滑滚至当前最大 scrollTop，结束时调用 onComplete（仅用于「回到底部」） */
+function runScrollListToBottomSmooth(
+  el: HTMLElement,
+  onComplete: () => void,
+): void {
+  const start = el.scrollTop;
+  const max0 = el.scrollHeight - el.clientHeight;
+  const dist0 = Math.max(0, max0 - start);
+  if (dist0 < 1) {
+    el.scrollTop = max0;
+    onComplete();
+    return;
+  }
+  const durationMs = Math.min(
+    AI_CHAT_SMOOTH_SCROLL_MAX_MS,
+    Math.max(
+      AI_CHAT_SMOOTH_SCROLL_MIN_MS,
+      (dist0 / AI_CHAT_SMOOTH_SCROLL_SPEED_PX_PER_SEC) * 1000,
+    ),
+  );
+  const t0 = performance.now();
+  const step = (now: number) => {
+    const u = Math.min(1, (now - t0) / durationMs);
+    const eased = easeOutCubic(u);
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    el.scrollTop = start + (maxScroll - start) * eased;
+    if (u < 1) {
+      jumpBottomSmoothRafId = requestAnimationFrame(step);
+    } else {
+      jumpBottomSmoothRafId = null;
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+      onComplete();
+    }
+  };
+  jumpBottomSmoothRafId = requestAnimationFrame(step);
+}
+
+function endJumpBottomSmoothScrollTracking(syncJumpButton: boolean) {
+  if (jumpBottomSmoothDoneTimer != null) {
+    clearTimeout(jumpBottomSmoothDoneTimer);
+    jumpBottomSmoothDoneTimer = null;
+  }
+  cancelJumpBottomSmoothRaf();
+  jumpBottomRevealSuppressed.value = false;
+  if (syncJumpButton) {
+    const root = listRef.value;
+    if (root) {
+      const d = root.scrollHeight - root.scrollTop - root.clientHeight;
+      showJumpBottom.value = d > 100;
+    }
+  }
+}
+const threads = ref<AiThreadListRow[]>([]);
+
+const historyThreadGroups = computed((): AiHistoryThreadGroup[] => {
+  const list = [...threads.value].sort((a, b) => b.updatedAt - a.updatedAt);
+  const groups: AiHistoryThreadGroup[] = [];
+  let curKey = "";
+  for (const t of list) {
+    const dk = localDayKey(t.updatedAt);
+    if (dk !== curKey) {
+      curKey = dk;
+      groups.push({
+        dayKey: dk,
+        label: formatHistoryGroupLabel(dk),
+        threads: [t],
+      });
+    } else {
+      groups[groups.length - 1]!.threads.push(t);
+    }
+  }
+  return groups;
+});
 
 const indexPhase = ref<
   "idle" | "chunking" | "embedding" | "indexing" | "error"
@@ -67,6 +221,34 @@ const indexPhase = ref<
 const indexEmbedCurrent = ref(0);
 const indexEmbedTotal = ref(0);
 const indexError = ref("");
+
+/** 列表展示：末尾追加临时「索引/向量化」消息，随滚动区滚动并在贴底时可见 */
+const messagesForChatView = computed((): UiMsg[] => {
+  const base = messages.value;
+  const ph = indexPhase.value;
+  if (ph === "idle") return base;
+  if (ph === "error") {
+    return [
+      ...base,
+      {
+        id: "__indexBanner",
+        role: "indexBanner",
+        phase: "error",
+        errorText: indexError.value,
+      },
+    ];
+  }
+  return [
+    ...base,
+    {
+      id: "__indexBanner",
+      role: "indexBanner",
+      phase: ph,
+      embedCurrent: indexEmbedCurrent.value,
+      embedTotal: indexEmbedTotal.value,
+    },
+  ];
+});
 
 const listRef = ref<HTMLElement | null>(null);
 const historyBtnRef = useTemplateRef<HTMLButtonElement>("historyBtnRef");
@@ -76,13 +258,97 @@ const exportMenuOpen = ref(false);
 const exportDropdownRef = ref<HTMLElement | null>(null);
 const exportDropLeft = ref(0);
 const exportDropTop = ref(0);
-const exportDropWidth = ref(200);
 const historyDropLeft = ref(0);
 const historyDropTop = ref(0);
 const historyDropWidth = ref(280);
 
 const composerInputRef =
   useTemplateRef<HTMLTextAreaElement>("composerInputRef");
+const threadTitleInputRef = useTemplateRef<HTMLInputElement>(
+  "threadTitleInputRef",
+);
+
+const threadTitleEditing = ref(false);
+const threadTitleEditDraft = ref("");
+
+const currentThreadTitle = computed(() => {
+  const tid = threadId.value;
+  if (!tid) return "—";
+  const row = threads.value.find((x) => x.id === tid);
+  return row?.title?.trim() || "新对话";
+});
+
+watch(threadId, () => {
+  threadTitleEditing.value = false;
+});
+
+function onThreadTitleDblClick() {
+  if (
+    !hasFile.value ||
+    !threadId.value ||
+    chatAwaitingReply.value ||
+    streaming.value
+  )
+    return;
+  threadTitleEditDraft.value = currentThreadTitle.value;
+  threadTitleEditing.value = true;
+  void nextTick(() => {
+    const el = threadTitleInputRef.value;
+    el?.focus();
+    el?.select?.();
+  });
+}
+
+async function submitThreadTitleEdit() {
+  if (!threadTitleEditing.value) return;
+  const tid = threadId.value;
+  const next = threadTitleEditDraft.value.trim() || "新对话";
+  const prev = currentThreadTitle.value;
+  if (!tid || next === prev) {
+    threadTitleEditing.value = false;
+    return;
+  }
+  threadTitleEditing.value = false;
+  try {
+    await window.colorTxt.ai.threadRename(tid, next, true);
+    await loadThreadList();
+  } catch {
+    // ignore
+  }
+}
+
+function cancelThreadTitleEdit() {
+  threadTitleEditing.value = false;
+}
+
+function onThreadTitleEditKeydown(e: KeyboardEvent) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    void submitThreadTitleEdit();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    cancelThreadTitleEdit();
+    (e.target as HTMLInputElement).blur();
+  }
+}
+
+/** 用于在分块等本地阶段响应「停止」（与主进程 embedding abort 配合） */
+const currentTurnAbort = shallowRef<AbortController | null>(null);
+/** 本轮已成功发起 Agent（等待主进程 done/error） */
+const awaitingAgentDone = ref(false);
+/** 用户中止：主进程仍会回送 done，由渲染进程持久化并跳过整表重载 */
+const agentUserAbort = ref(false);
+
+function isAbortLike(e: unknown): boolean {
+  return e instanceof Error && e.name === "AbortError";
+}
+
+function abortActiveAiWork(requestId: number) {
+  currentTurnAbort.value?.abort();
+  currentTurnAbort.value = null;
+  void window.colorTxt.ai.embedAbort(requestId);
+  window.colorTxt.ai.chatAbort(requestId);
+}
 
 /** 输入区最大高度（px），超出后出现滚动条 */
 const COMPOSER_INPUT_MAX_PX = 168;
@@ -99,17 +365,48 @@ function autosizeComposerInput() {
   el.style.height = `${capped}px`;
   el.style.overflowY = natural > maxPx ? "auto" : "hidden";
 }
-const persistedChatRequests = new Set<number>();
-watch(threadId, () => {
-  persistedChatRequests.clear();
-});
-let offChunk: (() => void) | null = null;
-let offDone: (() => void) | null = null;
-let offErr: (() => void) | null = null;
+let offAgent: (() => void) | null = null;
 
 const hasFile = computed(() =>
   Boolean(props.sessionFilePath && props.physicalReaderPath),
 );
+
+function focusComposer() {
+  if (!hasFile.value) return;
+  void nextTick(() => {
+    composerInputRef.value?.focus();
+  });
+}
+
+/** 模型下拉顶部固定项：与任意模型名不冲突 */
+const CHAT_MODEL_PULL_ITEM_ID = "__ai_pull_models__";
+
+const chatModelFixedTopItems = computed((): CustomSelectItem[] => {
+  const phase = composerPullModelsPhase.value;
+  const loadingUi = phase === "loading";
+  const successUi = phase === "success";
+  const failUi = phase === "fail";
+  const prefixHtml = successUi
+    ? icons.success
+    : failUi
+      ? icons.fail
+      : icons.refresh;
+  return [
+    {
+      kind: "item",
+      id: CHAT_MODEL_PULL_ITEM_ID,
+      label: "拉取模型",
+      actionOnly: true,
+      keepOpenOnAction: true,
+      disabled: chatModelsLoading.value,
+      danger: failUi,
+      prefixHtml,
+      prefixWrapperClass: loadingUi ? "customSelectMenuPrefixSpin" : "",
+      itemClass: successUi ? "appShellMenuItem--success" : "",
+    },
+    { kind: "divider" },
+  ];
+});
 
 const chatModelScrollItems = computed((): CustomSelectItem[] => {
   const opts = chatModelOptions.value;
@@ -133,29 +430,83 @@ const chatModelDisplayLabel = computed(() =>
   truncateModelLabel(activeChatModel.value),
 );
 
+/** 设置 → AI「快速提问」；随 configGet 刷新 */
+const aiQuickQuestions = ref<string[]>([]);
+
+const aiQuickQuestionsForUi = computed(() =>
+  aiQuickQuestions.value.map((s) => s.trim()).filter(Boolean),
+);
+
+const showAiQuickQuestions = computed(() => {
+  if (!hasFile.value) return false;
+  if (indexPhase.value !== "idle") return false;
+  if (chatAwaitingReply.value || streaming.value) return false;
+  if (messages.value.some((m) => m.role === "user" || m.role === "assistant")) {
+    return false;
+  }
+  return aiQuickQuestionsForUi.value.length > 0;
+});
+
 async function syncChatModelFromConfig() {
   try {
     const cfg = await window.colorTxt.ai.configGet();
     savedConfigModel.value = cfg.chat.model.trim();
     activeChatModel.value = cfg.chat.model.trim();
+    aiQuickQuestions.value = [...cfg.quickQuestions];
   } catch {
     savedConfigModel.value = "";
     activeChatModel.value = "";
+    aiQuickQuestions.value = normalizeAiQuickQuestions(undefined);
   }
 }
 
-async function refreshChatModels() {
+async function refreshChatModels(opts?: { composerSuccessFlash?: boolean }) {
   chatModelsLoading.value = true;
+  if (opts?.composerSuccessFlash) {
+    if (composerPullModelsSuccessTimer != null) {
+      clearTimeout(composerPullModelsSuccessTimer);
+      composerPullModelsSuccessTimer = null;
+    }
+    composerPullModelsPhase.value = "loading";
+  }
+  let ok = false;
   try {
     const cfg = await window.colorTxt.ai.configGet();
     const r = await window.colorTxt.ai.modelsList({
       baseUrl: cfg.chat.baseUrl,
       apiKey: cfg.chat.apiKey,
     });
+    ok = r.ok;
     if (r.ok) chatModelOptions.value = r.models;
     else chatModelOptions.value = [];
   } finally {
     chatModelsLoading.value = false;
+    if (
+      !opts?.composerSuccessFlash &&
+      ok &&
+      composerPullModelsPhase.value === "fail"
+    ) {
+      composerPullModelsPhase.value = "idle";
+    }
+    if (opts?.composerSuccessFlash) {
+      if (ok) {
+        composerPullModelsPhase.value = "success";
+        if (composerPullModelsSuccessTimer != null) {
+          clearTimeout(composerPullModelsSuccessTimer);
+          composerPullModelsSuccessTimer = null;
+        }
+        composerPullModelsSuccessTimer = setTimeout(() => {
+          composerPullModelsPhase.value = "idle";
+          composerPullModelsSuccessTimer = null;
+        }, 1000);
+      } else {
+        if (composerPullModelsSuccessTimer != null) {
+          clearTimeout(composerPullModelsSuccessTimer);
+          composerPullModelsSuccessTimer = null;
+        }
+        composerPullModelsPhase.value = "fail";
+      }
+    }
   }
 }
 
@@ -165,11 +516,77 @@ function onChatModelPanelOpenChange(isOpen: boolean) {
   void refreshChatModels();
 }
 
+function onChatModelSelectAction(id: string) {
+  if (id !== CHAT_MODEL_PULL_ITEM_ID) return;
+  if (chatModelsLoading.value) return;
+  void refreshChatModels({ composerSuccessFlash: true });
+}
+
 function onListScroll() {
   const el = listRef.value;
   if (!el) return;
   const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-  showJumpBottom.value = dist > 100;
+  listStickBottom.value = dist < LIST_STICK_BOTTOM_PX;
+  if (!jumpBottomRevealSuppressed.value) {
+    showJumpBottom.value = dist > 100;
+  }
+}
+
+/** 折叠正文区域的 `.aiFoldContent`（须在聊天列表内） */
+function findAiFoldContentForSelectAll(): HTMLElement | null {
+  const root = listRef.value;
+  if (!root) return null;
+
+  const foldFromNode = (node: Node | null): HTMLElement | null => {
+    if (!node) return null;
+    const start =
+      node.nodeType === Node.ELEMENT_NODE
+        ? (node as Element)
+        : node.parentElement;
+    const c = start?.closest(".aiFoldContent");
+    return c instanceof HTMLElement && root.contains(c) ? c : null;
+  };
+
+  const ae = document.activeElement;
+  if (ae instanceof HTMLElement) {
+    const f = foldFromNode(ae);
+    if (f) return f;
+  }
+
+  const sel = window.getSelection();
+  if (sel?.rangeCount) return foldFromNode(sel.anchorNode);
+
+  return null;
+}
+
+/**
+ * 点击 `pre` 内文字时常只移动选区、焦点仍在阅读器等控件上，按键不会进 `aiList`。
+ * 在 window 捕获阶段根据「焦点或选区锚点」是否在折叠内容内拦截 Ctrl/Cmd+A。
+ */
+function onWindowCaptureAiFoldSelectAll(ev: KeyboardEvent) {
+  if (ev.key !== "a" && ev.key !== "A") return;
+  if (!ev.ctrlKey && !ev.metaKey) return;
+  if (ev.altKey) return;
+
+  const root = listRef.value;
+  if (!root) return;
+
+  const ae = document.activeElement;
+  if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
+    if (root.contains(ae)) return;
+  }
+
+  const content = findAiFoldContentForSelectAll();
+  if (!content) return;
+
+  ev.preventDefault();
+  ev.stopImmediatePropagation();
+  const range = document.createRange();
+  range.selectNodeContents(content);
+  const sel = window.getSelection();
+  if (!sel) return;
+  sel.removeAllRanges();
+  sel.addRange(range);
 }
 
 async function refreshBookHash() {
@@ -198,22 +615,29 @@ async function loadThreadList() {
     id: t.id,
     title: t.title,
     updatedAt: t.updatedAt,
+    titleLocked: Number(t.titleLocked) === 1,
   }));
+}
+
+async function maybeRenameThreadFromFirstExchange(tid: string) {
+  if (!bookHash.value) return;
+  const rows = await window.colorTxt.ai.messageList(tid);
+  const users = rows.filter((x) => x.role === "user");
+  if (users.length !== 1) return;
+  const remoteThreads = await window.colorTxt.ai.threadList(bookHash.value);
+  const meta = remoteThreads.find((t) => t.id === tid);
+  if (meta && Number(meta.titleLocked) === 1) return;
+  const curTitle = meta?.title?.trim() ?? "";
+  if (curTitle && curTitle !== "新对话") return;
+  const title = users[0]!.content.trim().slice(0, 24) || "对话";
+  await window.colorTxt.ai.threadRename(tid, title);
+  await loadThreadList();
 }
 
 async function loadMessagesForThread(tid: string) {
   const rows = await window.colorTxt.ai.messageList(tid);
-  messages.value = rows
-    .filter((r) => r.role === "user" || r.role === "assistant")
-    .map((r) => ({
-      id: r.id,
-      role: r.role as "user" | "assistant",
-      content: r.content,
-      aborted: r.aborted,
-      createdAt: r.createdAt,
-    }));
-  await nextTick();
-  scrollToBottom();
+  messages.value = rowsToUiMessages(rows);
+  await scrollListToBottomAfterMessagesLoad();
 }
 
 async function ensureThread() {
@@ -251,84 +675,230 @@ watch(hasFile, () => {
   void nextTick(() => autosizeComposerInput());
 });
 
-function scrollToBottom() {
+watch(
+  assistantTabEffectiveVisible,
+  (vis) => {
+    if (!vis) return;
+    void syncChatModelFromConfig();
+    void nextTick(() => {
+      flushPendingScrollToBottomAfterVisible();
+      focusComposer();
+    });
+  },
+  { immediate: true },
+);
+
+function scrollToBottom(behavior: ScrollBehavior = "auto") {
   const el = listRef.value;
-  if (el) el.scrollTop = el.scrollHeight;
+  if (!el) return;
+  listStickBottom.value = true;
   showJumpBottom.value = false;
+
+  if (behavior === "smooth") {
+    endJumpBottomSmoothScrollTracking(false);
+    jumpBottomRevealSuppressed.value = true;
+    let settled = false;
+    const release = () => {
+      if (settled) return;
+      settled = true;
+      if (jumpBottomSmoothDoneTimer != null) {
+        clearTimeout(jumpBottomSmoothDoneTimer);
+        jumpBottomSmoothDoneTimer = null;
+      }
+      endJumpBottomSmoothScrollTracking(true);
+    };
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const approxMs = Math.min(
+      AI_CHAT_SMOOTH_SCROLL_MAX_MS,
+      Math.max(
+        AI_CHAT_SMOOTH_SCROLL_MIN_MS,
+        (Math.max(0, dist) / AI_CHAT_SMOOTH_SCROLL_SPEED_PX_PER_SEC) * 1000,
+      ),
+    );
+    jumpBottomSmoothDoneTimer = window.setTimeout(release, approxMs + 400);
+    runScrollListToBottomSmooth(el, release);
+    return;
+  }
+
+  endJumpBottomSmoothScrollTracking(false);
+  el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
 }
 
+function tryApplyScrollBottomAfterMessagesLoad() {
+  const el = listRef.value;
+  if (!el) return;
+  if (el.clientHeight <= 0) {
+    pendingScrollToBottomAfterVisible.value = true;
+    return;
+  }
+  listStickBottom.value = true;
+  showJumpBottom.value = false;
+  el.scrollTop = el.scrollHeight;
+  pendingScrollToBottomAfterVisible.value = false;
+}
+
+function flushPendingScrollToBottomAfterVisible() {
+  if (!pendingScrollToBottomAfterVisible.value) return;
+  void nextTick(() => {
+    requestAnimationFrame(() => tryApplyScrollBottomAfterMessagesLoad());
+  });
+}
+
+async function scrollListToBottomAfterMessagesLoad() {
+  await nextTick();
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  tryApplyScrollBottomAfterMessagesLoad();
+}
+
+function maybeScrollListToBottom() {
+  if (!listStickBottom.value) return;
+  const run = () => {
+    const el = listRef.value;
+    if (el) el.scrollTop = el.scrollHeight;
+    showJumpBottom.value = false;
+  };
+  /** 流式增高大后再贴底，避免同一帧内 scrollHeight 尚未更新 */
+  requestAnimationFrame(run);
+}
+
+watch(
+  () =>
+    [
+      indexPhase.value,
+      indexEmbedCurrent.value,
+      indexEmbedTotal.value,
+      indexError.value,
+      messages.value.length,
+    ] as const,
+  () => {
+    void nextTick(() => maybeScrollListToBottom());
+  },
+);
+
 onMounted(() => {
+  window.addEventListener("keydown", onWindowCaptureAiFoldSelectAll, true);
   document.addEventListener("pointerdown", onHistoryDocPointerDown);
   document.addEventListener("keydown", onHistoryDocKeydown, true);
   window.addEventListener("resize", onHistoryWindowResize);
   void nextTick(() => autosizeComposerInput());
-  offChunk = window.colorTxt.ai.onChatChunk(({ requestId, delta }) => {
-    if (requestId !== activeRequestId.value) return;
+  offAgent = window.colorTxt.ai.onAgentEvent((ev: AIAgentRendererEvent) => {
+    if (ev.requestId !== activeRequestId.value) return;
     const last = messages.value[messages.value.length - 1];
     if (!last || last.role !== "assistant") return;
-    last.content += delta;
-    void nextTick(() => scrollToBottom());
-  });
-  offDone = window.colorTxt.ai.onChatDone(({ requestId }) => {
-    if (requestId !== activeRequestId.value) return;
-    streaming.value = false;
-    void persistAssistantIfNeeded(requestId, false);
-  });
-  offErr = window.colorTxt.ai.onChatError(({ requestId, message }) => {
-    if (requestId !== activeRequestId.value) return;
-    streaming.value = false;
-    const last = messages.value[messages.value.length - 1];
-    if (last?.role === "assistant") {
-      last.content += `\n\n（错误：${message}）`;
+
+    switch (ev.type) {
+      case "reasoning_delta":
+        appendReasoningDelta(last, ev.delta);
+        break;
+      case "content_delta":
+        last.answer += ev.delta;
+        break;
+      case "tool_executing":
+        sealLiveThinkingBeforeTool(last);
+        last.tools.push({
+          id: `live_${ev.toolCallId}_${Date.now()}`,
+          toolCallId: ev.toolCallId,
+          name: ev.name,
+          argsPreview: ev.argsPreview,
+          status: "running",
+          preview: "",
+          full: "",
+          open: false,
+        });
+        last.segments.push({ kind: "toolRef", toolCallId: ev.toolCallId });
+        break;
+      case "tool_result": {
+        const t = last.tools.find((x) => x.toolCallId === ev.toolCallId);
+        if (t) {
+          t.status = ev.ok ? "done" : "error";
+          t.preview = ev.preview;
+          t.full = ev.full;
+        }
+        break;
+      }
+      case "round_end":
+        /** 多轮 tool 之间模型常在 assistant.content 里重复输出草稿；清空以免叠在同一条气泡里 */
+        last.answer = "";
+        break;
+      case "done":
+        streaming.value = false;
+        chatAwaitingReply.value = false;
+        currentTurnAbort.value = null;
+        last.agentLive = false;
+        awaitingAgentDone.value = false;
+        if (agentUserAbort.value) {
+          agentUserAbort.value = false;
+          finalizeLiveThinkingAfterStop(last);
+          void (async () => {
+            const tid = threadId.value;
+            if (!tid || last.role !== "assistant") return;
+            const aid = await window.colorTxt.ai.messageAppend(
+              tid,
+              "assistant",
+              assistantPlainText(last),
+              true,
+            );
+            last.id = aid;
+            last.createdAt = Date.now();
+            await maybeRenameThreadFromFirstExchange(tid);
+          })();
+          break;
+        }
+        void (async () => {
+          const tid = threadId.value;
+          if (tid) {
+            await loadMessagesForThread(tid);
+            await maybeRenameThreadFromFirstExchange(tid);
+          }
+        })();
+        break;
+      case "error":
+        streaming.value = false;
+        chatAwaitingReply.value = false;
+        currentTurnAbort.value = null;
+        last.agentLive = false;
+        awaitingAgentDone.value = false;
+        agentUserAbort.value = false;
+        finalizeLiveThinkingAfterStop(last);
+        if (last.answer.trim()) last.errorDetail = ev.message;
+        else {
+          last.answer = ev.message;
+          last.error = true;
+        }
+        break;
+      default:
+        break;
     }
-    void persistAssistantIfNeeded(requestId, false);
+    void nextTick(() => maybeScrollListToBottom());
   });
 });
 
-async function persistAssistantIfNeeded(requestId: number, aborted: boolean) {
-  if (persistedChatRequests.has(requestId)) return;
-  persistedChatRequests.add(requestId);
-  const tid = threadId.value;
-  if (!tid) return;
-  const last = messages.value[messages.value.length - 1];
-  if (!last || last.role !== "assistant") return;
-  const aid = await window.colorTxt.ai.messageAppend(
-    tid,
-    "assistant",
-    last.content,
-    aborted,
-  );
-  last.id = aid;
-  last.createdAt = Date.now();
-  if (
-    messages.value.filter((m) => m.role === "user").length === 1 &&
-    messages.value.filter((m) => m.role === "assistant").length === 1
-  ) {
-    const u = messages.value.find((m) => m.role === "user");
-    if (u) {
-      const title = u.content.trim().slice(0, 24) || "对话";
-      await window.colorTxt.ai.threadRename(tid, title);
-      await loadThreadList();
-    }
-  }
-}
-
 onBeforeUnmount(() => {
+  if (composerPullModelsSuccessTimer != null) {
+    clearTimeout(composerPullModelsSuccessTimer);
+    composerPullModelsSuccessTimer = null;
+  }
+  endJumpBottomSmoothScrollTracking(false);
+  window.removeEventListener("keydown", onWindowCaptureAiFoldSelectAll, true);
   document.removeEventListener("pointerdown", onHistoryDocPointerDown);
   document.removeEventListener("keydown", onHistoryDocKeydown, true);
   window.removeEventListener("resize", onHistoryWindowResize);
-  offChunk?.();
-  offDone?.();
-  offErr?.();
-  if (streaming.value) {
-    const rid = activeRequestId.value;
-    window.colorTxt.ai.chatAbort(rid);
-    void persistAssistantIfNeeded(rid, true);
+  offAgent?.();
+  if (chatAwaitingReply.value || streaming.value) {
+    onStop();
   }
 });
 
-async function buildIndex(): Promise<boolean> {
+async function buildIndex(
+  signal: AbortSignal,
+  requestId: number,
+): Promise<boolean> {
   if (!bookHash.value || !props.readerMainRef?.getAllText) return false;
+  if (signal.aborted) {
+    const e = new Error("Aborted");
+    e.name = "AbortError";
+    throw e;
+  }
   indexError.value = "";
   const cfg = await window.colorTxt.ai.configGet();
   const full = props.readerMainRef.getAllText();
@@ -341,6 +911,11 @@ async function buildIndex(): Promise<boolean> {
     minTokens: cfg.chunkMinTokens,
     overlapRatio: cfg.chunkOverlapRatio,
   });
+  if (signal.aborted) {
+    const e = new Error("Aborted");
+    e.name = "AbortError";
+    throw e;
+  }
   const texts = drafts.map((d) => d.content);
   indexPhase.value = "embedding";
   indexEmbedTotal.value = Math.max(1, Math.ceil(texts.length / 20));
@@ -348,13 +923,23 @@ async function buildIndex(): Promise<boolean> {
   const allEmb: number[][] = [];
   try {
     for (let i = 0; i < texts.length; i += 20) {
+      if (signal.aborted) {
+        const e = new Error("Aborted");
+        e.name = "AbortError";
+        throw e;
+      }
       const batch = texts.slice(i, i + 20);
-      const emb = await window.colorTxt.ai.embed(batch);
+      const emb = await window.colorTxt.ai.embed(batch, requestId);
       allEmb.push(...emb);
       indexEmbedCurrent.value = Math.min(
         indexEmbedTotal.value,
         indexEmbedCurrent.value + 1,
       );
+    }
+    if (signal.aborted) {
+      const e = new Error("Aborted");
+      e.name = "AbortError";
+      throw e;
     }
     indexPhase.value = "indexing";
     const records = drafts.map((d, j) => ({
@@ -373,23 +958,36 @@ async function buildIndex(): Promise<boolean> {
     indexPhase.value = "idle";
     return true;
   } catch (e) {
+    if (signal.aborted || isAbortLike(e)) {
+      indexPhase.value = "idle";
+      indexError.value = "";
+      throw e;
+    }
     indexPhase.value = "error";
     indexError.value = e instanceof Error ? e.message : String(e);
     return false;
   }
 }
 
-async function ensureIndexed(): Promise<boolean> {
+async function ensureIndexed(
+  requestId: number,
+  signal: AbortSignal,
+): Promise<boolean> {
   if (!bookHash.value) return false;
+  const cfg = await window.colorTxt.ai.configGet();
+  if (!cfg.embeddingEnabled) return true;
   const has = await window.colorTxt.ai.indexHasBook(bookHash.value);
   if (has) return true;
-  return buildIndex();
+  return buildIndex(signal, requestId);
 }
 
+/** 必须以阅读器视口探针为准，避免侧栏 activeChapterIdx 未及时同步时错章 */
 function resolvedChapterIdxForAi(): number {
-  if (props.activeChapterIdx >= 0) return props.activeChapterIdx;
   const probe = props.readerMainRef?.getProbeLine?.() ?? 1;
-  return pickActiveChapterIdx(props.chapters, probe);
+  const fromProbe = pickActiveChapterIdx(props.chapters, probe);
+  if (fromProbe >= 0) return fromProbe;
+  if (props.activeChapterIdx >= 0) return props.activeChapterIdx;
+  return -1;
 }
 
 function bookMetaPayload() {
@@ -401,18 +999,48 @@ function bookMetaPayload() {
       ?.replace(/\.[^.]+$/, "") ?? "未命名";
   const idx = resolvedChapterIdxForAi();
   const ch = idx >= 0 ? props.chapters[idx] : undefined;
+  const reader = props.readerMainRef ?? undefined;
+  const sel = reader?.getSelectedText?.()?.trim() ?? "";
+  const selPart =
+    sel.length > 0 ? (sel.length > 320 ? `${sel.slice(0, 320)}…` : sel) : "";
+  const windowCap = selPart ? 400 : READER_SURROUNDING_DEFAULT_MAX_CHARS;
+  const windowPart = getReaderSurroundingPlainText(reader, windowCap).trim();
+  const surroundingParts: string[] = [];
+  if (idx >= 0 && ch) {
+    const titleBit = (ch.title ?? "").trim() || "（无标题）";
+    surroundingParts.push(
+      `【与本节选同位的当前章】第 ${idx + 1} 章 · ${titleBit}（总结/问答「本章」时 ragContext 的 chapterIndex=${idx}）`,
+    );
+  }
+  if (selPart) surroundingParts.push(`当前选中：\n${selPart}`);
+  if (windowPart) surroundingParts.push(`视窗周边：\n${windowPart}`);
+  const surroundingText =
+    surroundingParts.length > 0 ? surroundingParts.join("\n\n") : undefined;
+
   return {
     fileTitle: base,
     chapterCount: Math.max(props.chapters.length, 1),
     currentChapterIndex: idx,
     currentChapterTitle:
       idx >= 0 ? (ch?.title ?? "") : "（阅读位置未匹配到章节）",
+    ...(surroundingText !== undefined ? { surroundingText } : {}),
   };
+}
+
+async function onQuickQuestion(q: string) {
+  const text = q.trim();
+  if (!text || chatAwaitingReply.value || streaming.value || !hasFile.value) {
+    return;
+  }
+  input.value = text;
+  await nextTick();
+  autosizeComposerInput();
+  await onSend();
 }
 
 async function onSend() {
   const text = input.value.trim();
-  if (!text || streaming.value || !hasFile.value) return;
+  if (!text || chatAwaitingReply.value || !hasFile.value) return;
   await ensureThread();
   const tid = threadId.value;
   if (!tid || !bookHash.value) return;
@@ -420,7 +1048,7 @@ async function onSend() {
   const cfg = await window.colorTxt.ai.configGet();
   const effectiveModel = activeChatModel.value.trim() || cfg.chat.model.trim();
   if (!effectiveModel) {
-    alert("请先在设置 → AI 中配置对话模型，或在本面板选择模型。");
+    await appAlert("请先在设置 → AI 中配置对话模型，或在本面板选择模型。");
     return;
   }
 
@@ -434,116 +1062,184 @@ async function onSend() {
     content: text,
     createdAt: userTs,
   });
-  await nextTick();
-  scrollToBottom();
-
   messages.value.push({
     id: `pending_${userTs}`,
     role: "assistant",
-    content: "",
+    segments: [{ kind: "think", sealed: false, text: "", open: true }],
+    tools: [],
+    answer: "",
     createdAt: userTs,
+    agentLive: true,
   });
-
-  let ragSnippets: AIChatStreamPayload["ragSnippets"] = [];
-  try {
-    const ok = await ensureIndexed();
-    if (ok) {
-      const emb = await window.colorTxt.ai.embed([text]);
-      const q = emb[0];
-      if (q) {
-        const hits = await window.colorTxt.ai.indexSearch({
-          bookHash: bookHash.value,
-          queryEmbedding: q,
-          topK: cfg.ragTopK,
-        });
-        if (Array.isArray(hits)) {
-          ragSnippets = (hits as AIIndexSearchHit[]).map((h) => ({
-            chapterIndex: h.chapterIndex,
-            chapterTitle: h.chapterTitle,
-            content: h.content,
-          }));
-        }
-      }
-    }
-  } catch {
-    // 无索引或非致命：继续对话
-  }
-
-  const history = messages.value
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .slice(0, -1)
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
-
+  chatAwaitingReply.value = true;
+  /** 须在占位助手行插入后再测 scrollHeight，否则会少滚一截，流式输出时也依赖 listStickBottom 正确贴底 */
+  await nextTick();
+  scrollToBottom();
+  awaitingAgentDone.value = false;
+  agentUserAbort.value = false;
   activeRequestId.value += 1;
   const requestId = activeRequestId.value;
-  streaming.value = true;
 
-  const bookMeta = bookMetaPayload();
-  const currentChapterText = getCurrentChapterPlainText(
-    props.readerMainRef ?? undefined,
-    props.chapters,
-    bookMeta.currentChapterIndex,
-    80_000,
-  );
+  const turnAc = new AbortController();
+  currentTurnAbort.value = turnAc;
 
-  const override =
-    activeChatModel.value.trim() &&
-    activeChatModel.value.trim() !== savedConfigModel.value.trim()
-      ? activeChatModel.value.trim()
-      : undefined;
+  try {
+    const ok = await ensureIndexed(requestId, turnAc.signal);
+    if (turnAc.signal.aborted) {
+      const e = new Error("Aborted");
+      e.name = "AbortError";
+      throw e;
+    }
+    if (!ok) {
+      streaming.value = false;
+      chatAwaitingReply.value = false;
+      currentTurnAbort.value = null;
+      const last = messages.value[messages.value.length - 1];
+      if (last?.role === "assistant") {
+        last.answer =
+          indexError.value.trim() !== ""
+            ? `索引失败：${indexError.value}`
+            : "索引未完成，无法启动阅读助手。";
+        last.error = true;
+        last.agentLive = false;
+        finalizeLiveThinkingAfterStop(last);
+      }
+      return;
+    }
 
-  const payload: AIChatStreamPayload = {
-    requestId,
-    messages: history,
-    ragSnippets,
-    bookMeta,
-    currentChapterText:
-      currentChapterText.trim() !== "" ? currentChapterText : undefined,
-    deepThinking: deepThinking.value,
-    spoilerSafe: spoilerSafe.value ? true : undefined,
-    chatModelOverride: override,
-  };
+    streaming.value = true;
+    currentTurnAbort.value = null;
 
-  const start = await window.colorTxt.ai.chatStart(payload);
-  if (!start.ok) {
+    const bookMeta = bookMetaPayload();
+    const override =
+      activeChatModel.value.trim() &&
+      activeChatModel.value.trim() !== savedConfigModel.value.trim()
+        ? activeChatModel.value.trim()
+        : undefined;
+
+    const start = await window.colorTxt.ai.agentStart({
+      requestId,
+      threadId: tid,
+      bookHash: bookHash.value,
+      userText: text,
+      bookMeta,
+      deepThinking: deepThinking.value,
+      spoilerSafe: spoilerSafe.value,
+      chatModelOverride: override,
+      slidingWindowSize: cfg.chat.slidingWindowSize,
+      enabledSkills: collectEnabledAgentSkills(
+        props.aiSkillsEnabled ?? {},
+        props.aiSkillOverrides ?? {},
+        props.aiCustomSkills ?? [],
+      ),
+    });
+    if (!start.ok) {
+      streaming.value = false;
+      chatAwaitingReply.value = false;
+      currentTurnAbort.value = null;
+      const last = messages.value[messages.value.length - 1];
+      if (last?.role === "assistant") {
+        last.answer = start.error ?? "无法发起对话";
+        last.error = true;
+        last.agentLive = false;
+        finalizeLiveThinkingAfterStop(last);
+      }
+      return;
+    }
+    awaitingAgentDone.value = true;
+  } catch (e) {
     streaming.value = false;
+    chatAwaitingReply.value = false;
+    currentTurnAbort.value = null;
+    awaitingAgentDone.value = false;
     const last = messages.value[messages.value.length - 1];
+    if (isAbortLike(e) || turnAc.signal.aborted) {
+      if (last?.role === "assistant") {
+        last.aborted = true;
+        last.agentLive = false;
+        finalizeLiveThinkingAfterStop(last);
+        void (async () => {
+          const t = threadId.value;
+          if (!t || last.role !== "assistant") return;
+          const aid = await window.colorTxt.ai.messageAppend(
+            t,
+            "assistant",
+            assistantPlainText(last),
+            true,
+          );
+          last.id = aid;
+          last.createdAt = Date.now();
+          await maybeRenameThreadFromFirstExchange(t);
+        })();
+      }
+      return;
+    }
     if (last?.role === "assistant") {
-      last.content = start.error ?? "无法发起对话";
+      last.answer = e instanceof Error ? e.message : String(e);
+      last.error = true;
+      last.agentLive = false;
+      finalizeLiveThinkingAfterStop(last);
     }
   }
 }
 
 function onStop() {
   const rid = activeRequestId.value;
-  window.colorTxt.ai.chatAbort(rid);
+  const shouldWaitAgentDone = awaitingAgentDone.value && streaming.value;
+  if (shouldWaitAgentDone) agentUserAbort.value = true;
+  abortActiveAiWork(rid);
   streaming.value = false;
+  chatAwaitingReply.value = false;
+  currentTurnAbort.value = null;
   const last = messages.value[messages.value.length - 1];
-  if (last?.role === "assistant" && !last.content.includes("用户已停止")) {
-    last.content += "\n\n_(用户已停止)_";
+  if (last?.role === "assistant") {
     last.aborted = true;
+    last.agentLive = false;
+    finalizeLiveThinkingAfterStop(last);
   }
-  void persistAssistantIfNeeded(rid, true);
+  if (!shouldWaitAgentDone && last?.role === "assistant") {
+    awaitingAgentDone.value = false;
+    void (async () => {
+      const t = threadId.value;
+      if (!t) return;
+      const aid = await window.colorTxt.ai.messageAppend(
+        t,
+        "assistant",
+        assistantPlainText(last),
+        true,
+      );
+      last.id = aid;
+      last.createdAt = Date.now();
+      await maybeRenameThreadFromFirstExchange(t);
+    })();
+  }
 }
 
 async function onNewChat() {
   if (!bookHash.value) return;
   if (streaming.value) onStop();
+  else if (chatAwaitingReply.value) {
+    abortActiveAiWork(activeRequestId.value);
+    chatAwaitingReply.value = false;
+  }
   const id = await window.colorTxt.ai.threadCreate(bookHash.value, "新对话");
   threadId.value = id;
   messages.value = [];
+  showJumpBottom.value = false;
+  listStickBottom.value = true;
+  await nextTick();
+  const listEl = listRef.value;
+  if (listEl) listEl.scrollTop = 0;
   await loadThreadList();
   historyOpen.value = false;
+  focusComposer();
 }
 
 async function positionHistoryDropdown() {
   const trig = historyBtnRef.value;
   if (!trig) return;
   const r = trig.getBoundingClientRect();
-  historyDropWidth.value = Math.max(240, Math.min(340, r.width + 200));
+  historyDropWidth.value = Math.max(280, Math.min(420, r.width + 240));
   historyDropLeft.value = r.left;
   historyDropTop.value = r.bottom + 4;
   await nextTick();
@@ -577,8 +1273,7 @@ async function positionExportDropdown() {
   const trig = exportBtnRef.value;
   if (!trig) return;
   const r = trig.getBoundingClientRect();
-  exportDropWidth.value = Math.max(220, Math.min(280, r.width + 160));
-  exportDropLeft.value = r.right - exportDropWidth.value;
+  exportDropLeft.value = r.right - AI_EXPORT_MENU_WIDTH_PX;
   exportDropTop.value = r.bottom + 4;
   await nextTick();
   const panel = exportDropdownRef.value;
@@ -602,24 +1297,6 @@ async function toggleExportMenu() {
   }
 }
 
-function chatExportDateSlug(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  return `${y}-${mo}-${da}`;
-}
-
-function exportThreadTitle(): string {
-  const tid = threadId.value;
-  const row = tid ? threads.value.find((x) => x.id === tid) : undefined;
-  if (row?.title?.trim()) return row.title.trim();
-  const firstUser = messages.value.find((m) => m.role === "user");
-  const u = firstUser?.content.trim();
-  if (u) return u.length > 120 ? `${u.slice(0, 120)}…` : u;
-  return "对话";
-}
-
 function resolveExportSaveDefaultPath(fileName: string): string | undefined {
   const base = props.physicalReaderPath || props.sessionFilePath;
   if (!base?.trim()) return undefined;
@@ -628,78 +1305,143 @@ function resolveExportSaveDefaultPath(fileName: string): string | undefined {
   return joinFs(dir, fileName);
 }
 
-/** ReadAny 风格 Markdown（复制与导出共用） */
-function buildReadAnyMarkdown(): string {
-  const title = exportThreadTitle();
-  const lines: string[] = [`# ${title}`, ""];
-  for (const m of messages.value) {
-    const label = m.role === "user" ? "**你**" : "**AI**";
-    lines.push(label, "", m.content, "", "---", "");
-  }
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  while (lines.length && lines[lines.length - 1] === "---") lines.pop();
-  lines.push(
-    "",
-    "---",
-    "",
-    `*${title} — Exported ${new Date().toLocaleString()}*`,
-  );
-  return lines.join("\n");
-}
-
-function buildReadAnyJson(): string {
-  const title = exportThreadTitle();
-  const exportedAt = new Date().toISOString();
-  const payload = {
-    title,
-    exportedAt,
-    messages: messages.value.map((m) => ({
-      id: m.id,
-      role: m.role,
-      parts: [{ type: "text", text: m.content }],
-      createdAt: m.createdAt ?? Date.now(),
-    })),
-  };
-  return `${JSON.stringify(payload, null, 2)}\n`;
-}
-
 async function exportMd() {
   const tid = threadId.value;
   if (!tid || messages.value.length === 0) return;
   exportMenuOpen.value = false;
-  const slug = chatExportDateSlug();
-  const name = `chat-${slug}.md`;
+  const exportTitle = resolveExportThreadTitle(
+    threadId.value,
+    threads.value,
+    messages.value,
+  );
+  const name = buildChatExportDefaultName(exportTitle, "md", false);
   const r = await window.colorTxt.ai.exportSave({
     defaultName: name,
     defaultPath: resolveExportSaveDefaultPath(name),
-    data: buildReadAnyMarkdown(),
+    data: buildAssistantChatExportMarkdown(
+      messages.value,
+      exportTitle,
+      false,
+      skillToolDisplayLabels.value,
+    ),
     filters: [{ name: "Markdown", extensions: ["md"] }],
   });
-  if (!r.ok && "error" in r) alert(r.error);
+  if (!r.ok && "error" in r) await appAlert(r.error);
+}
+
+async function exportMdWithReasoning() {
+  const tid = threadId.value;
+  if (!tid || messages.value.length === 0) return;
+  exportMenuOpen.value = false;
+  const exportTitle = resolveExportThreadTitle(
+    threadId.value,
+    threads.value,
+    messages.value,
+  );
+  const name = buildChatExportDefaultName(exportTitle, "md", true);
+  const r = await window.colorTxt.ai.exportSave({
+    defaultName: name,
+    defaultPath: resolveExportSaveDefaultPath(name),
+    data: buildAssistantChatExportMarkdown(
+      messages.value,
+      exportTitle,
+      true,
+      skillToolDisplayLabels.value,
+    ),
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (!r.ok && "error" in r) await appAlert(r.error);
 }
 
 async function exportJson() {
   const tid = threadId.value;
   if (!tid || messages.value.length === 0) return;
   exportMenuOpen.value = false;
-  const slug = chatExportDateSlug();
-  const name = `chat-${slug}.json`;
+  const exportTitle = resolveExportThreadTitle(
+    threadId.value,
+    threads.value,
+    messages.value,
+  );
+  const name = buildChatExportDefaultName(exportTitle, "json", false);
   const r = await window.colorTxt.ai.exportSave({
     defaultName: name,
     defaultPath: resolveExportSaveDefaultPath(name),
-    data: buildReadAnyJson(),
+    data: buildAssistantChatExportJson(
+      messages.value,
+      exportTitle,
+      false,
+      skillToolDisplayLabels.value,
+    ),
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
-  if (!r.ok && "error" in r) alert(r.error);
+  if (!r.ok && "error" in r) await appAlert(r.error);
+}
+
+async function exportJsonWithReasoning() {
+  const tid = threadId.value;
+  if (!tid || messages.value.length === 0) return;
+  exportMenuOpen.value = false;
+  const exportTitle = resolveExportThreadTitle(
+    threadId.value,
+    threads.value,
+    messages.value,
+  );
+  const name = buildChatExportDefaultName(exportTitle, "json", true);
+  const r = await window.colorTxt.ai.exportSave({
+    defaultName: name,
+    defaultPath: resolveExportSaveDefaultPath(name),
+    data: buildAssistantChatExportJson(
+      messages.value,
+      exportTitle,
+      true,
+      skillToolDisplayLabels.value,
+    ),
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (!r.ok && "error" in r) await appAlert(r.error);
 }
 
 async function copyAllMarkdown() {
   if (messages.value.length === 0) return;
   exportMenuOpen.value = false;
   try {
-    await navigator.clipboard.writeText(buildReadAnyMarkdown());
+    const exportTitle = resolveExportThreadTitle(
+      threadId.value,
+      threads.value,
+      messages.value,
+    );
+    await navigator.clipboard.writeText(
+      buildAssistantChatExportMarkdown(
+        messages.value,
+        exportTitle,
+        false,
+        skillToolDisplayLabels.value,
+      ),
+    );
   } catch {
-    alert("复制失败：剪贴板不可用");
+    await appAlert("复制失败：剪贴板不可用");
+  }
+}
+
+async function copyAllMarkdownWithReasoning() {
+  if (messages.value.length === 0) return;
+  exportMenuOpen.value = false;
+  try {
+    const exportTitle = resolveExportThreadTitle(
+      threadId.value,
+      threads.value,
+      messages.value,
+    );
+    await navigator.clipboard.writeText(
+      buildAssistantChatExportMarkdown(
+        messages.value,
+        exportTitle,
+        true,
+        skillToolDisplayLabels.value,
+      ),
+    );
+  } catch {
+    await appAlert("复制失败：剪贴板不可用");
   }
 }
 
@@ -737,9 +1479,14 @@ function onHistoryWindowResize() {
 
 async function selectThread(id: string) {
   if (streaming.value) onStop();
+  else if (chatAwaitingReply.value) {
+    abortActiveAiWork(activeRequestId.value);
+    chatAwaitingReply.value = false;
+  }
   threadId.value = id;
   await loadMessagesForThread(id);
   historyOpen.value = false;
+  focusComposer();
 }
 
 function onHistoryRowKeydown(e: KeyboardEvent, id: string) {
@@ -759,26 +1506,13 @@ async function deleteThread(id: string) {
   }
 }
 
-function onChClick(ch1: number) {
-  const idx = ch1 - 1;
-  const ch = props.chapters[idx];
+async function onChClick(chapterIndexZeroBased: number) {
+  const ch = props.chapters[chapterIndexZeroBased];
   if (ch) emit("jumpToChapter", ch);
-  else alert(`未找到第 ${ch1} 章`);
-}
-
-async function copyMsg(content: string, ev: Event) {
-  try {
-    await navigator.clipboard.writeText(content);
-    const btn = (ev.currentTarget as HTMLElement).querySelector(".copyIcon");
-    if (btn) {
-      btn.innerHTML = icons.success;
-      window.setTimeout(() => {
-        btn.innerHTML = icons.copy;
-      }, 900);
-    }
-  } catch {
-    // ignore
-  }
+  else
+    await appAlert(
+      `未找到第 ${chapterIndexZeroBased + 1} 章（chapterIndex=${chapterIndexZeroBased}）`,
+    );
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -791,233 +1525,296 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="aiPanel">
-    <div class="aiToolbarRow">
-      <button
-        ref="historyBtnRef"
-        type="button"
-        class="aiActivityLikeBtn"
-        title="历史会话"
-        aria-label="历史会话"
-        aria-haspopup="listbox"
-        :aria-expanded="historyOpen"
-        @click="toggleHistoryDropdown"
-      >
-        <span class="svg" v-html="icons.history" />
-      </button>
-      <div class="aiModelPickWrap">
-        <AppCustomSelect
-          class="aiModelPick"
-          :model-value="activeChatModel"
-          :display-label="chatModelDisplayLabel"
-          :fixed-top-items="selectListsEmpty"
-          :scroll-items="chatModelScrollItems"
-          :fixed-bottom-items="selectListsEmpty"
-          :scroll-max-height="260"
-          :min-panel-width="240"
-          ariaLabel="对话模型"
-          @panel-open-change="onChatModelPanelOpenChange"
-          @update:model-value="activeChatModel = $event"
-        />
-      </div>
-      <div class="aiToolbarEnd">
+    <template v-if="hasFile">
+      <div class="aiToolbarRow">
         <button
-          ref="exportBtnRef"
+          ref="historyBtnRef"
           type="button"
           class="aiActivityLikeBtn"
-          title="导出 / 复制"
-          aria-label="导出"
-          aria-haspopup="menu"
-          :aria-expanded="exportMenuOpen"
-          :disabled="messages.length === 0"
-          @click="toggleExportMenu"
+          title="历史会话"
+          aria-label="历史会话"
+          aria-haspopup="listbox"
+          :aria-expanded="historyOpen"
+          @click="toggleHistoryDropdown"
         >
-          <span class="svg" v-html="icons.download" />
+          <span class="svg" v-html="icons.history" />
         </button>
-        <button
-          type="button"
-          class="aiActivityLikeBtn"
-          title="新对话"
-          @click="onNewChat"
-        >
-          <span class="svg" v-html="icons.newChat" />
-        </button>
+        <div class="aiToolbarThreadTitleWrap">
+          <input
+            v-if="threadTitleEditing"
+            ref="threadTitleInputRef"
+            v-model="threadTitleEditDraft"
+            class="aiToolbarThreadTitleInput"
+            type="text"
+            maxlength="120"
+            aria-label="会话名称"
+            @blur="submitThreadTitleEdit"
+            @keydown="onThreadTitleEditKeydown"
+          />
+          <span
+            v-else
+            class="aiToolbarThreadTitle"
+            :title="currentThreadTitle"
+            @click="onThreadTitleDblClick"
+            >{{ currentThreadTitle }}</span
+          >
+        </div>
+        <div class="aiToolbarEnd">
+          <button
+            ref="exportBtnRef"
+            type="button"
+            class="aiActivityLikeBtn"
+            title="导出对话"
+            aria-label="导出对话"
+            aria-haspopup="menu"
+            :aria-expanded="exportMenuOpen"
+            :disabled="messages.length === 0"
+            @click="toggleExportMenu"
+          >
+            <span class="svg" v-html="icons.download" />
+          </button>
+          <button
+            type="button"
+            class="aiActivityLikeBtn"
+            title="新对话"
+            @click="onNewChat"
+          >
+            <span class="svg" v-html="icons.newChat" />
+          </button>
+        </div>
       </div>
-    </div>
 
-    <Teleport to="body">
-      <div
-        v-if="historyOpen"
-        ref="historyDropdownRef"
-        class="aiHistoryDropdown appShellMenuPanel"
-        data-fullscreen-sidebar-float
-        role="listbox"
-        aria-label="会话历史"
-        :style="{
-          left: `${historyDropLeft}px`,
-          top: `${historyDropTop}px`,
-          width: `${historyDropWidth}px`,
-        }"
-        @click.stop
-      >
-        <ul
-          v-if="threads.length > 0"
-          class="aiHistoryDropdownList"
-          role="presentation"
+      <Teleport to="body">
+        <div
+          v-if="historyOpen"
+          ref="historyDropdownRef"
+          class="aiHistoryDropdown appShellMenuPanel"
+          data-fullscreen-sidebar-float
+          role="listbox"
+          aria-label="会话历史"
+          :style="{
+            left: `${historyDropLeft}px`,
+            top: `${historyDropTop}px`,
+            width: `${historyDropWidth}px`,
+          }"
+          @click.stop
         >
-          <li
-            v-for="t in threads"
-            :key="t.id"
-            class="aiHistoryDropdownRow"
-            :class="{ 'is-active': t.id === threadId }"
-            role="option"
-            tabindex="-1"
-            :aria-selected="t.id === threadId"
-            @click="selectThread(t.id)"
-            @keydown="onHistoryRowKeydown($event, t.id)"
+          <ul
+            v-if="threads.length > 0"
+            class="aiHistoryDropdownList"
+            role="presentation"
           >
-            <span class="aiHistoryDropdownLabel">{{
-              t.title || "未命名"
-            }}</span>
-            <button
-              type="button"
-              class="aiHistoryDropdownDelete"
-              title="删除会话"
-              aria-label="删除会话"
-              tabindex="-1"
-              @click.stop="deleteThread(t.id)"
-            >
-              <span class="svg" v-html="icons.remove" />
-            </button>
-          </li>
-        </ul>
-        <p v-else class="aiHistoryDropdownEmpty">暂无历史会话</p>
-      </div>
-    </Teleport>
-
-    <Teleport to="body">
-      <div
-        v-if="exportMenuOpen"
-        ref="exportDropdownRef"
-        class="aiExportDropdown appShellMenuPanel"
-        data-fullscreen-sidebar-float
-        role="menu"
-        aria-label="导出"
-        :style="{
-          left: `${exportDropLeft}px`,
-          top: `${exportDropTop}px`,
-          width: `${exportDropWidth}px`,
-        }"
-        @click.stop
-      >
-        <button
-          type="button"
-          class="appShellMenuItem"
-          role="menuitem"
-          @click="exportMd"
-        >
-          导出 Markdown
-        </button>
-        <button
-          type="button"
-          class="appShellMenuItem"
-          role="menuitem"
-          @click="exportJson"
-        >
-          导出 JSON
-        </button>
-        <div class="appShellMenuDivider" role="presentation" />
-        <button
-          type="button"
-          class="appShellMenuItem"
-          role="menuitem"
-          @click="copyAllMarkdown"
-        >
-          复制全部
-        </button>
-      </div>
-    </Teleport>
-
-    <div class="aiListWrap">
-      <div ref="listRef" class="aiList" @scroll="onListScroll">
-        <div v-if="!hasFile" class="aiHint">请先打开一本书后再开始聊天。</div>
-        <template v-else>
-          <div
-            v-if="indexPhase !== 'idle' && indexPhase !== 'error'"
-            class="aiIndexBanner"
-          >
-            <template v-if="indexPhase === 'chunking'">正在分块…</template>
-            <template v-else-if="indexPhase === 'embedding'">
-              正在向量化 {{ indexEmbedCurrent }} / {{ indexEmbedTotal }} …
-            </template>
-            <template v-else>正在写入索引…</template>
-          </div>
-          <div v-if="indexPhase === 'error'" class="aiIndexErr">
-            索引失败：{{ indexError }}
-          </div>
-
-          <div
-            v-if="messages.length === 0 && indexPhase === 'idle'"
-            class="aiHint"
-          >
-            <div>分析内容、剧情、角色等。</div>
-            <div>首次提问会为本书建立本地向量索引。</div>
-          </div>
-
-          <div
-            v-for="m in messages"
-            :key="m.id"
-            class="aiMsg"
-            :class="m.role === 'user' ? 'aiMsg--user' : 'aiMsg--bot'"
-          >
-            <div class="aiMsgInner">
-              <AiMarkdown
-                v-if="m.role === 'assistant'"
-                :source="m.content"
-                @chapter-click="onChClick"
-              />
-              <div v-else class="aiUserText">{{ m.content }}</div>
-              <button
-                v-if="m.content && m.role === 'assistant'"
-                type="button"
-                class="copyBtn"
-                title="复制"
-                @click="copyMsg(m.content, $event)"
+            <template v-for="g in historyThreadGroups" :key="g.dayKey">
+              <li class="aiHistoryDropdownDate" role="presentation">
+                {{ g.label }}
+              </li>
+              <li
+                v-for="t in g.threads"
+                :key="t.id"
+                class="aiHistoryDropdownRow"
+                :class="{ 'is-active': t.id === threadId }"
+                role="option"
+                tabindex="-1"
+                :aria-selected="t.id === threadId"
+                @click="selectThread(t.id)"
+                @keydown="onHistoryRowKeydown($event, t.id)"
               >
-                <span class="svg copyIcon" v-html="icons.copy" />
-              </button>
-            </div>
-          </div>
-        </template>
-      </div>
-      <button
-        v-show="showJumpBottom"
-        type="button"
-        class="aiJumpBottom btn"
-        @click="scrollToBottom"
-      >
-        <span class="svg" v-html="icons.down" />
-        回到底部
-      </button>
-    </div>
+                <div class="aiHistoryDropdownRowBody">
+                  <div class="aiHistoryDropdownTitleRow">
+                    <span class="aiHistoryDropdownLabel">{{
+                      t.title || "未命名"
+                    }}</span>
+                    <time
+                      class="aiHistoryDropdownTime"
+                      :datetime="new Date(t.updatedAt).toISOString()"
+                      >{{ formatThreadListTime(t.updatedAt) }}</time
+                    >
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="aiHistoryDropdownDelete"
+                  title="删除会话"
+                  aria-label="删除会话"
+                  tabindex="-1"
+                  @click.stop="deleteThread(t.id)"
+                >
+                  <span class="svg" v-html="icons.remove" />
+                </button>
+              </li>
+            </template>
+          </ul>
+          <p v-else class="aiHistoryDropdownEmpty">暂无历史会话</p>
+        </div>
+      </Teleport>
 
-    <div class="aiComposer">
-      <textarea
-        ref="composerInputRef"
-        v-model="input"
-        class="aiComposerInput"
-        rows="1"
-        :disabled="!hasFile || streaming"
-        placeholder="关于这本书的问题…"
-        @input="autosizeComposerInput"
-        @keydown="onKeydown"
-      />
-      <div class="aiComposerFooter">
-        <div class="aiComposerToggles">
+      <Teleport to="body">
+        <div
+          v-if="exportMenuOpen"
+          ref="exportDropdownRef"
+          class="aiExportDropdown appShellMenuPanel"
+          data-fullscreen-sidebar-float
+          role="menu"
+          aria-label="导出"
+          :style="{
+            left: `${exportDropLeft}px`,
+            top: `${exportDropTop}px`,
+            width: `${AI_EXPORT_MENU_WIDTH_PX}px`,
+          }"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="appShellMenuItem"
+            role="menuitem"
+            @click="exportMd"
+          >
+            导出 Markdown
+          </button>
+          <button
+            type="button"
+            class="appShellMenuItem"
+            role="menuitem"
+            @click="exportMdWithReasoning"
+          >
+            导出 Markdown（带思考过程）
+          </button>
+          <div class="appShellMenuDivider" role="presentation" />
+          <button
+            type="button"
+            class="appShellMenuItem"
+            role="menuitem"
+            @click="exportJson"
+          >
+            导出 JSON
+          </button>
+          <button
+            type="button"
+            class="appShellMenuItem"
+            role="menuitem"
+            @click="exportJsonWithReasoning"
+          >
+            导出 JSON（带思考过程）
+          </button>
+          <div class="appShellMenuDivider" role="presentation" />
+          <button
+            type="button"
+            class="appShellMenuItem"
+            role="menuitem"
+            @click="copyAllMarkdown"
+          >
+            复制全部
+          </button>
+          <button
+            type="button"
+            class="appShellMenuItem"
+            role="menuitem"
+            @click="copyAllMarkdownWithReasoning"
+          >
+            复制全部（带思考过程）
+          </button>
+        </div>
+      </Teleport>
+
+      <div class="aiListWrap">
+        <div ref="listRef" class="aiList" @scroll="onListScroll">
+          <AiAssistantChatMessages
+            :messages="messagesForChatView"
+            :skill-tool-labels="skillToolDisplayLabels"
+            @chapter-click="onChClick"
+          />
+        </div>
+        <button
+          v-show="showJumpBottom"
+          type="button"
+          class="aiJumpBottom"
+          @click="scrollToBottom('smooth')"
+        >
+          <span class="svg" v-html="icons.jumpBottom" />
+          回到底部
+        </button>
+      </div>
+
+      <div class="aiComposerStack">
+        <div v-if="showAiQuickQuestions" class="aiQuickQuestions">
+          <div class="aiQuickQuestionsTitle">快速提问</div>
+          <ul class="aiQuickQuestionsList" role="list">
+            <li
+              v-for="(q, i) in aiQuickQuestionsForUi"
+              :key="`${i}-${q}`"
+              class="aiQuickQuestionItem"
+              @click="onQuickQuestion(q)"
+            >
+              {{ q }}
+            </li>
+          </ul>
+        </div>
+        <div class="aiComposer">
+          <textarea
+            ref="composerInputRef"
+            v-model="input"
+            class="aiComposerInput"
+            rows="1"
+            :disabled="!hasFile || chatAwaitingReply"
+            placeholder="关于这本书的问题…"
+            @input="autosizeComposerInput"
+            @keydown="onKeydown"
+          />
+          <div class="aiComposerFooter">
+            <div class="aiComposerFooterMain">
+              <button
+                type="button"
+                class="aiActivityLikeBtn aiComposerNewChatBtn"
+                title="新对话"
+                :disabled="!hasFile"
+                @click="onNewChat"
+              >
+                <span class="svg" v-html="icons.newChat" />
+              </button>
+              <div class="aiComposerModelPickWrap">
+                <AppCustomSelect
+                  class="aiModelPick"
+                  :model-value="activeChatModel"
+                  :display-label="chatModelDisplayLabel"
+                  :fixed-top-items="chatModelFixedTopItems"
+                  :scroll-items="chatModelScrollItems"
+                  :fixed-bottom-items="selectListsEmpty"
+                  :scroll-max-height="260"
+                  :min-panel-width="240"
+                  ariaLabel="对话模型"
+                  @panel-open-change="onChatModelPanelOpenChange"
+                  @action="onChatModelSelectAction"
+                  @update:model-value="activeChatModel = $event"
+                />
+              </div>
+            </div>
+            <button
+              v-if="chatAwaitingReply"
+              type="button"
+              class="aiActivityLikeBtn aiComposerActionBtn aiComposerStopBtn"
+              title="停止"
+              @click="onStop"
+            >
+              <span class="svg" v-html="icons.stop" />
+            </button>
+            <button
+              v-else
+              type="button"
+              class="aiActivityLikeBtn aiComposerActionBtn aiComposerSendBtn"
+              title="发送"
+              :disabled="!hasFile || !input.trim()"
+              @click="onSend"
+            >
+              <span class="svg" v-html="icons.send" />
+            </button>
+          </div>
+        </div>
+        <div class="aiComposerTogglesRow">
           <button
             type="button"
             class="aiPillToggle"
             :class="{ 'aiPillToggle--on': deepThinking }"
-            title="深度思考：先列依据再结论"
+            title="启用更深入的分析与推理过程，响应时间可能更长"
             @click="deepThinking = !deepThinking"
           >
             <span class="svg aiPillToggle__icon" v-html="icons.brain" />
@@ -1027,34 +1824,19 @@ function onKeydown(e: KeyboardEvent) {
             type="button"
             class="aiPillToggle"
             :class="{ 'aiPillToggle--on': spoilerSafe }"
-            title="尽量不透露当前章之后的剧情"
+            title="避免透露当前阅读进度之后的内容"
             @click="spoilerSafe = !spoilerSafe"
           >
-            <span class="svg aiPillToggle__icon" v-html="icons.viewOff" />
+            <span
+              class="svg aiPillToggle__icon"
+              v-html="spoilerSafe ? icons.viewOff : icons.view"
+            />
             防剧透
           </button>
         </div>
-        <button
-          v-if="streaming"
-          type="button"
-          class="aiActivityLikeBtn aiComposerActionBtn aiComposerStopBtn"
-          title="停止生成"
-          @click="onStop"
-        >
-          <span class="svg" v-html="icons.stop" />
-        </button>
-        <button
-          v-else
-          type="button"
-          class="aiActivityLikeBtn aiComposerActionBtn aiComposerSendBtn"
-          title="发送"
-          :disabled="!hasFile || !input.trim()"
-          @click="onSend"
-        >
-          <span class="svg" v-html="icons.send" />
-        </button>
       </div>
-    </div>
+    </template>
+    <div v-else class="aiPanelEmpty">请先打开一本书后再开始聊天</div>
   </div>
 </template>
 
@@ -1067,26 +1849,86 @@ function onKeydown(e: KeyboardEvent) {
   background: var(--bg);
 }
 
+/** 与章节侧栏 `.empty` 一致：未打开文件时仅居中提示 */
+.aiPanelEmpty {
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+
 .aiToolbarRow {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px 8px;
+  padding: 8px 6px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  height: 40px;
 }
 
-.aiModelPickWrap {
+.aiToolbarThreadTitleWrap {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+}
+
+.aiToolbarThreadTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.aiToolbarThreadTitle:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.aiToolbarThreadTitleInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.aiToolbarThreadTitleInput:focus {
+  outline: none;
 }
 
 .aiModelPick {
-  /* max-width: 150px; */
   min-width: 0;
   flex: unset;
+}
+
+.aiModelPick :deep(.customSelectTrigger) {
+  border: none;
+  background: transparent;
+  color: var(--tab-fg);
+}
+
+.aiModelPick :deep(.customSelectTrigger:hover) {
+  color: var(--tab-fg-hover);
+  background: var(--icon-btn-bg-hover);
 }
 
 .aiToolbarEnd {
@@ -1137,8 +1979,8 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .svg :deep(svg) {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   display: block;
 }
 
@@ -1158,7 +2000,7 @@ function onKeydown(e: KeyboardEvent) {
   padding: 12px 12px 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   user-select: text;
   -webkit-user-select: text;
   cursor: auto;
@@ -1176,87 +2018,85 @@ function onKeydown(e: KeyboardEvent) {
   padding: 6px 12px;
   font-size: 12px;
   border-radius: 999px;
+  border: none;
+  background: var(--primary);
+  color: #ffffff;
+  cursor: pointer;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
   white-space: nowrap;
+  user-select: none;
+}
+
+.aiJumpBottom:hover {
+  background: var(--primary-hover);
 }
 
 .aiJumpBottom .svg :deep(svg) {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .aiJumpBottom .svg :deep(svg path) {
   fill: currentColor;
 }
 
-.aiHint {
-  font-size: 13px;
-  color: var(--secondary);
-  line-height: 1.5;
-  padding: 12px 8px;
-  user-select: none;
-}
-
-.aiIndexBanner,
-.aiIndexErr {
-  font-size: 12px;
-  padding: 8px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--fg);
-}
-
-.aiIndexErr {
-  background: color-mix(in srgb, #f44 15%, transparent);
-}
-
-.aiMsg {
+.aiComposerStack {
+  flex-shrink: 0;
+  margin: 10px;
   display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.aiMsg--user {
-  justify-content: flex-end;
+.aiQuickQuestions {
+  padding: 0 2px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.aiMsgInner {
-  max-width: 92%;
-  position: relative;
-  padding: 8px 10px;
-  border-radius: 10px;
-}
-
-.aiMsg--user .aiMsgInner {
-  background: var(--icon-btn-bg-active);
-}
-
-.aiUserText {
+.aiQuickQuestionsTitle {
   font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-weight: 600;
+  color: var(--muted);
 }
 
-.copyBtn {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  opacity: 0;
-  border: none;
-  background: transparent;
+.aiQuickQuestionsList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aiQuickQuestionItem {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
   cursor: pointer;
-  padding: 4px;
+  border-radius: 8px;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
-.aiMsgInner:hover .copyBtn {
-  opacity: 1;
+.aiQuickQuestionItem:hover {
+  background: var(--primary-bg);
+  color: var(--primary);
 }
 
 .aiComposer {
   flex-shrink: 0;
-  margin: 10px 10px 12px;
-  padding: 10px 10px 8px;
+  margin: 0;
+  padding: 6px;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--input-bg);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1275,7 +2115,7 @@ function onKeydown(e: KeyboardEvent) {
   overflow-x: hidden;
   overflow-y: hidden;
   resize: none;
-  padding: 6px 4px 4px;
+  padding: 6px 4px 0;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -1286,7 +2126,7 @@ function onKeydown(e: KeyboardEvent) {
   user-select: text;
   -webkit-user-select: text;
   /** 预留纵向滚动条槽位，避免出现滚动条时变窄换行、行数突变 */
-  scrollbar-gutter: stable;
+  /* scrollbar-gutter: stable; */
 }
 
 .aiComposerInput:focus {
@@ -1297,15 +2137,37 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
-.aiComposerToggles {
+.aiComposerFooterMain {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+.aiComposerNewChatBtn {
+  flex-shrink: 0;
+}
+
+.aiComposerModelPickWrap {
+  flex: 1 1 120px;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.aiComposerTogglesRow {
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  padding: 0 2px;
   min-width: 0;
 }
 
@@ -1321,11 +2183,11 @@ function onKeydown(e: KeyboardEvent) {
   font-size: 12px;
   cursor: pointer;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .aiPillToggle:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--icon-btn-bg-hover);
 }
 
 .aiPillToggle--on {
@@ -1334,20 +2196,35 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .aiPillToggle__icon :deep(svg) {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .aiPillToggle__icon :deep(svg path) {
   fill: currentColor;
 }
 
+.aiComposerActionBtn {
+  flex-shrink: 0;
+}
+
+.aiComposerSendBtn {
+  border-radius: 50%;
+}
+
+.aiComposerSendBtn:disabled {
+  color: var(--info);
+  background: var(--info-border);
+}
+
 .aiComposerSendBtn:not(:disabled) {
-  color: var(--fgj);
+  color: #ffffff;
+  background: var(--primary);
 }
 
 .aiActivityLikeBtn.aiComposerSendBtn:hover:not(:disabled) {
-  color: var(--fgj);
+  color: #ffffff;
+  background: var(--primary-hover);
 }
 
 .aiComposerStopBtn {
@@ -1355,7 +2232,17 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .aiActivityLikeBtn.aiComposerStopBtn:hover:not(:disabled) {
-  color: var(--danger);
+  color: var(--danger-hover);
+}
+
+.aiComposerStopBtn .svg :deep(svg) {
+  width: 24px;
+  height: 24px;
+}
+
+.aiComposerStopBtn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--danger-hover);
 }
 
 .aiComposerActionBtn .svg :deep(svg path) {
@@ -1370,8 +2257,9 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /** 与 FontPicker `.fontMenu` 一致 */
+  /** 横向 6px + 行内 10px ≈ 侧栏章节虚拟列表（scroll 6px + item 10px）；纵向留白 */
   padding: 6px;
+  user-select: none;
 }
 
 .aiExportDropdown {
@@ -1383,10 +2271,16 @@ function onKeydown(e: KeyboardEvent) {
   min-width: 0;
 }
 
+/**
+ * 与书签列表一致（`style.css` `.sidebar .virtualList-scroll.sidebarList`）：
+ * 水平留白由 `.aiHistoryDropdown` 的 `padding: 6px` 统一提供；列表不再额外 `padding-right`，
+ * 且不使用 `scrollbar-gutter: stable`（无滚动条时也会占位导致右侧白条）。
+ */
 .aiHistoryDropdownList {
   list-style: none;
   margin: 0;
-  padding: 0;
+  box-sizing: border-box;
+  padding: 0 0 4px;
   overflow-y: auto;
   min-height: 0;
   display: flex;
@@ -1394,19 +2288,35 @@ function onKeydown(e: KeyboardEvent) {
   gap: 4px;
 }
 
+.aiHistoryDropdownList::-webkit-scrollbar-thumb {
+  border-right-width: 0;
+}
+
+.aiHistoryDropdownDate {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
+
+.aiHistoryDropdownDate:first-child {
+  padding-top: 4px;
+}
+
 .aiHistoryDropdownRow {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  height: 36px;
-  padding: 0 4px 0 10px;
+  gap: 6px;
+  padding: 8px 4px 8px 10px;
   border-radius: 4px;
   cursor: pointer;
   color: var(--list-item-fg);
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 1.35;
   outline: none;
 }
 
@@ -1422,19 +2332,44 @@ function onKeydown(e: KeyboardEvent) {
   background: color-mix(in srgb, var(--accent) 14%, var(--list-item-bg-hover));
 }
 
+.aiHistoryDropdownRowBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+
+.aiHistoryDropdownTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
 .aiHistoryDropdownLabel {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.aiHistoryDropdownTime {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .aiHistoryDropdownDelete {
   flex-shrink: 0;
   box-sizing: border-box;
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1461,8 +2396,8 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .aiHistoryDropdownDelete .svg :deep(svg) {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   display: block;
 }
 

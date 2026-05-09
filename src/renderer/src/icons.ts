@@ -41,7 +41,6 @@ import closeIcon from "./assets/close.svg?raw";
 import ascIcon from "./assets/asc.svg?raw";
 import descIcon from "./assets/desc.svg?raw";
 import folderOpenIcon from "./assets/folder_open.svg?raw";
-import extensionIcon from "./assets/extension.svg?raw";
 import aiChatIcon from "./assets/AI_chat.svg?raw";
 import brainIcon from "./assets/brain.svg?raw";
 import copyIcon from "./assets/copy.svg?raw";
@@ -56,6 +55,9 @@ import refreshIcon from "./assets/refresh.svg?raw";
 import unknowIcon from "./assets/unknow.svg?raw";
 import failIcon from "./assets/fail.svg?raw";
 import stopIcon from "./assets/stop.svg?raw";
+import thinkingPulseIcon from "./assets/thinking_pulse.svg?raw";
+import foldChevronIcon from "./assets/fold_chevron.svg?raw";
+import jumpBottomIcon from "./assets/jump_bottom.svg?raw";
 
 export const icons = {
   dark: darkIcon,
@@ -101,7 +103,6 @@ export const icons = {
   asc: ascIcon,
   desc: descIcon,
   folderOpen: folderOpenIcon,
-  extension: extensionIcon,
   aiChat: aiChatIcon,
   brain: brainIcon,
   copy: copyIcon,
@@ -116,4 +117,10 @@ export const icons = {
   unknow: unknowIcon,
   fail: failIcon,
   stop: stopIcon,
+  /** 阅读助手「正在思考…」/ 工具进行中的脉动圆点 */
+  thinkingPulse: thinkingPulseIcon,
+  /** 折叠面板标题右侧 chevron（默认向下，展开时旋转为向上） */
+  foldChevron: foldChevronIcon,
+  /** AI 阅读助手「回到底部」 */
+  jumpBottom: jumpBottomIcon,
 } as const;

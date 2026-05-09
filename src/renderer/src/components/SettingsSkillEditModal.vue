@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import AppModal from "./AppModal.vue";
+import { appAlert } from "../services/appDialog";
 
 export type SkillEditModalMode = "builtin" | "custom" | "create";
 
@@ -53,10 +54,10 @@ function onCancel() {
   open.value = false;
 }
 
-function onSave() {
+async function onSave() {
   const title = titleField.value.trim();
   if (!titleLocked.value && !title) {
-    alert("请填写技能名称。");
+    await appAlert("请填写技能名称。");
     return;
   }
   emit("save", {
@@ -89,9 +90,7 @@ function onSave() {
           :disabled="titleLocked"
           autocomplete="off"
         />
-        <p v-if="titleLocked" class="skillEditHint">
-          内置技能名称不可修改
-        </p>
+        <p v-if="titleLocked" class="skillEditHint">内置技能名称不可修改</p>
       </div>
 
       <div class="skillEditField">
@@ -118,8 +117,12 @@ function onSave() {
 
     <template #footer>
       <div class="skillEditFooter">
-        <button type="button" class="btn" @click="onCancel">取消</button>
-        <button type="button" class="btn primary" @click="onSave">保存</button>
+        <button type="button" size="large" class="btn" @click="onCancel">
+          取消
+        </button>
+        <button type="button" size="large" class="btn primary" @click="onSave">
+          保存
+        </button>
       </div>
     </template>
   </AppModal>
@@ -132,6 +135,7 @@ function onSave() {
   gap: 14px;
   min-height: 0;
   flex: 1 1 auto;
+  margin-top: 10px;
 }
 
 .skillEditField {
@@ -162,9 +166,9 @@ function onSave() {
 .skillEditInput {
   box-sizing: border-box;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--input-bg, var(--control-bg));
   color: var(--fg);
   font-size: 13px;
@@ -182,14 +186,15 @@ function onSave() {
   flex: 1 1 auto;
   min-height: 160px;
   resize: vertical;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--input-bg, var(--control-bg));
   color: var(--fg);
   font-size: 13px;
   line-height: 1.45;
   font-family: inherit;
+  resize: none;
 }
 
 .skillEditFooter {

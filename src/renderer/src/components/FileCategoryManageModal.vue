@@ -5,7 +5,7 @@ import HexColorPickerField from "./HexColorPickerField.vue";
 import IconButton from "./IconButton.vue";
 import type { FileCategoryDefinition } from "../constants/fileCategories";
 import type { CategoryEditorRow } from "../constants/fileCategories";
-import { appAlert } from "../services/appAlert";
+import { appAlert } from "../services/appDialog";
 import { normalizeLooseHex6 } from "../utils/color";
 import { icons } from "../icons";
 

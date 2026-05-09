@@ -1,26 +1,86 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { marked } from "marked";
+import {
+  ensureMarkedStrongDelimiterSpacing,
+  normalizeMarkdownAsterisks,
+} from "../utils/aiMarkdownMarkedPrep";
+import {
+  chapterNumStrFromMarkerMatch,
+  createAiChapterMarkerRegex,
+  normalizeCompoundAiChapterMarkers,
+} from "../utils/aiMarkdownChapterRef";
 
 const props = defineProps<{
   source: string;
 }>();
 
+/**
+ * 在 marked 输出 HTML 之后，于 `pre` / `code` 外的文本节点中把
+ * `（ch=N）` 中 N = chapterIndex（从 0 起）；按钮展示为「第 N+1 章」。仍兼容半角 `(ch=N)`、`[ch=N]`、`(ch=标识: N)` 等旧输出。
+ */
+function injectChapterRefButtons(html: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<div class="ai-md-wrap">${html}</div>`,
+    "text/html",
+  );
+  const wrap = doc.body.firstElementChild;
+  if (!wrap) return html;
+
+  function injectIntoTextNode(tn: Text): void {
+    const raw = tn.textContent ?? "";
+    const re = createAiChapterMarkerRegex();
+    if (!re.test(raw)) return;
+    re.lastIndex = 0;
+
+    const frag = doc.createDocumentFragment();
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw))) {
+      frag.appendChild(doc.createTextNode(raw.slice(last, m.index)));
+      const num = chapterNumStrFromMarkerMatch(m);
+      const idx = Number.parseInt(num, 10);
+      const btn = doc.createElement("button");
+      btn.type = "button";
+      btn.className = "aiChRef";
+      btn.setAttribute("data-ch", num);
+      btn.textContent =
+        Number.isFinite(idx) && idx >= 0 ? `第 ${idx + 1} 章` : `章 ${num}`;
+      frag.appendChild(btn);
+      last = m.index + m[0].length;
+    }
+    frag.appendChild(doc.createTextNode(raw.slice(last)));
+    tn.parentNode?.replaceChild(frag, tn);
+  }
+
+  function walk(el: Element): void {
+    for (const child of [...el.childNodes]) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const tn = child as Text;
+        if (tn.parentElement?.closest("pre, code")) continue;
+        injectIntoTextNode(tn);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        walk(child as Element);
+      }
+    }
+  }
+
+  walk(wrap);
+  return wrap.innerHTML;
+}
+
 const html = computed(() => {
-  const staged = props.source.replace(
-    /\(ch=(\d+)\)/g,
-    "[[COLORTXT_CH:$1]]",
-  );
-  let out = marked.parse(staged, { breaks: true, async: false }) as string;
-  out = out.replace(
-    /\[\[COLORTXT_CH:(\d+)\]\]/g,
-    '<button type="button" class="aiChRef" data-ch="$1">第 $1 章</button>',
-  );
-  return out;
+  let md = normalizeMarkdownAsterisks(props.source);
+  md = normalizeCompoundAiChapterMarkers(md);
+  md = ensureMarkedStrongDelimiterSpacing(md);
+  const parsed = marked.parse(md, { breaks: true, async: false }) as string;
+  return injectChapterRefButtons(parsed);
 });
 
 const emit = defineEmits<{
-  chapterClick: [chapterIndex1Based: number];
+  /** 与书籍章节数组下标一致（从 0 起），由父组件用于 jumpToChapter */
+  chapterClick: [chapterIndexZeroBased: number];
 }>();
 
 function onClick(e: MouseEvent) {
@@ -29,8 +89,8 @@ function onClick(e: MouseEvent) {
   ) as HTMLElement | null;
   if (!t) return;
   e.preventDefault();
-  const n = Number.parseInt(t.getAttribute("data-ch") ?? "", 10);
-  if (Number.isFinite(n) && n >= 1) emit("chapterClick", n);
+  const idx = Number.parseInt(t.getAttribute("data-ch") ?? "", 10);
+  if (Number.isFinite(idx) && idx >= 0) emit("chapterClick", idx);
 }
 </script>
 

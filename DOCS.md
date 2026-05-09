@@ -540,7 +540,7 @@ src/
 
 ### AI 助手与本地 RAG
 
-- **入口**：阅读侧栏活动栏中的「AI 助手」。对话依赖当前打开的书籍正文（与扩展 RPC `getText` 同源思路）；需在设置弹窗 **AI** Tab 中配置 **对话** 与 **嵌入** 两套 OpenAI 兼容端点（Base URL、API Key、模型等可分开）。
+- **入口**：阅读侧栏活动栏中的「AI 助手」。对话依赖当前打开的书籍正文（与阅读器当前全文视图一致）；需在设置弹窗 **AI** Tab 中配置 **对话** 与 **嵌入** 两套 OpenAI 兼容端点（Base URL、API Key、模型等可分开）。
 - **首次索引**：在 AI 面板中对当前书执行「建索引」：渲染进程按章节分块，主进程通过 IPC 批量请求嵌入接口，向量写入 **`userData/ai/vector.sqlite`**（`better-sqlite3` + `sqlite-vec`）；检索命中片段会进入系统提示词参与回答。修改嵌入 **向量维度** 并保存时，应用会按提示清空该书向量索引（需重新建索引）。
 - **会话与配置**：每本书（按内容哈希）可多会话；会话与消息存于同一 SQLite。AI 运行时配置位于 **`userData/ai/config.json`**。聊天与嵌入请求由主进程代理并以 IPC 流式推回渲染进程（支持中止）。
 
@@ -570,15 +570,3 @@ src/
 - 名称中的「**-简**」表示对应 **简体中文（SC）** 字体族，与 macOS 字体册中常见命名一致；并非「只能显示简体字」，而是字形与排版习惯面向简体场景。
 - **Linux** 等环境需自行安装常见中文字体包（如 Noto CJK、文泉驿、文鼎 UKai 等），否则可能回退到栈中后续族名或系统默认字体。
 
-## 扩展（.ctix）
-
-侧栏底部「扩展」入口用于安装与管理插件包。**`.ctix`** 实为 zip，根目录需包含 **`package.json`**（字段对齐 VS Code 子集），至少包含 **`name`**（扩展 id）、**`displayName`**、**`contributes.viewsContainers.activitybar`** 与 **`contributes.views.<容器id>`**，且每个视图需声明 **`entry`**（相对根目录的 HTML 文件）。
-
-- **内置扩展**：打包时放在 `resources/builtin-extensions/<name>/`，随安装包复制到 `process.resourcesPath/builtin-extensions`；与用户扩展共用 **`colortxt-extension:///<name>/<相对路径>`** 协议（三重 `/`，扩展 id 放在 pathname，避免 id 含 `.` 时无法加载）。
-- **用户扩展**：解压至 **`userData/extensions/<name>/`**。
-- **开发调试**：开发模式下可使用启动参数 **`--extension-development-path=/绝对路径`**（指向含 `package.json` 的扩展根目录）；生产包需设置环境变量 **`COLORTXT_EXTENSION_DEV=1`** 才允许该加载方式。
-- **与宿主通信**：扩展视图在 **`sandbox` iframe** 内加载 HTML；通过 **`window.parent.postMessage`**，约定 **`colortxt/ext:request`** / **`colortxt/ext:response`**（RPC）、**`colortxt/ext:event`**（推送）、**`colortxt/ext:init`**（`extId`、`viewId`）。阅读主题由 **`theme:set`** 同步到主进程；暗色（`vs-dark`）下协议返回扩展 HTML 时在 `<html>` 上注入 **`dark`**。主题切换时宿主通过内部消息实时切换扩展页面 `html.dark`，无需重载 iframe。可选用仓库内 **`packages/extension-api`** 封装客户端。
-- **已实现 RPC**：`getChapters`、`getCurrentFilePath`、`getText`、`getCurrentChapterText`、`getSelectedText`、`jumpToLine`、`jumpToChapterByLine`、`ping`。
-- **推送事件**：`file:streamEnd`、`file:closed`、`chapters:rebuilt`、`selection:changed`。
-
-示例可参考 **`resources/builtin-extensions/colortxt.builtin.sample/`**。手动打包：`zip -r my.ctix package.json panel.html …`（根目录即为清单所在目录）。

@@ -64,10 +64,6 @@
       {
         "from": "resources/icon.ico",
         "to": "icon.ico"
-      },
-      {
-        "from": "resources/builtin-extensions",
-        "to": "builtin-extensions"
       }
     ],
     "files": [

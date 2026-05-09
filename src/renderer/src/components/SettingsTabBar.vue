@@ -1,5 +1,10 @@
 <script setup lang="ts">
-export type SettingsTabId = "general" | "reading" | "ai" | "skills";
+export type SettingsTabId =
+  | "general"
+  | "reading"
+  | "ai"
+  | "vectorModel"
+  | "skills";
 
 defineProps<{
   activeTab: SettingsTabId;
@@ -47,6 +52,16 @@ const emit = defineEmits<{
         type="button"
         role="tab"
         class="tabBtn"
+        :class="{ active: activeTab === 'vectorModel' }"
+        :aria-selected="activeTab === 'vectorModel'"
+        @click="emit('update:activeTab', 'vectorModel')"
+      >
+        向量模型
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="tabBtn"
         :class="{ active: activeTab === 'skills' }"
         :aria-selected="activeTab === 'skills'"
         @click="emit('update:activeTab', 'skills')"
@@ -61,7 +76,6 @@ const emit = defineEmits<{
 .settingsTabBar {
   flex-shrink: 0;
   margin-bottom: 0;
-  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
 

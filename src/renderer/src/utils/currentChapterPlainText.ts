@@ -1,7 +1,7 @@
 import type { Chapter } from "../chapter";
 import { pickActiveChapterIdx } from "../reader/chapterIndex";
 
-/** 与扩展 RPC `getCurrentChapterText` 对齐的上限；注入 AI system 时再收紧 */
+/** 向 AI 注入「当前章全文」时的硬上限；system 层可再收紧 */
 const HARD_CAP = 512_000;
 
 export type ReaderLinesSource = {

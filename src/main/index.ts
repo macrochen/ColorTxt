@@ -1,10 +1,5 @@
 import { app, BrowserWindow, protocol } from "electron";
 import { registerColortxtLocalProtocol } from "./colortxtLocalProtocol";
-import {
-  registerColortxtExtensionProtocol,
-  refreshExtensionProtocolRoots,
-} from "./extensionProtocol";
-import { setDevExtensionPathsFromArgv } from "./extensionService";
 import { registerMainIpcHandlers } from "./ipcHandlers";
 import { setupLaunchTxtHandlers } from "./launchTxtHandlers";
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from "./globalShortcuts";
@@ -23,19 +18,7 @@ protocol.registerSchemesAsPrivileged([
       stream: true,
     },
   },
-  {
-    scheme: "colortxt-extension",
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true,
-    },
-  },
 ]);
-
-setDevExtensionPathsFromArgv(process.argv);
 
 registerUpdaterIpc();
 
@@ -57,8 +40,6 @@ registerMainIpcHandlers({
 const launchTxtHandlers = setupLaunchTxtHandlers({ createWindow });
 
 app.whenReady().then(async () => {
-  registerColortxtExtensionProtocol();
-  await refreshExtensionProtocolRoots();
   registerColortxtLocalProtocol();
   setupAutoUpdater();
   const launchTxt = launchTxtHandlers.resolveLaunchTxtForStartup(process.argv);

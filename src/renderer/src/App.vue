@@ -7,7 +7,6 @@ import {
   ref,
   useTemplateRef,
   watch,
-  nextTick,
 } from "vue";
 import type { ComponentPublicInstance } from "vue";
 import { getChapterMatchRules, type Chapter } from "./chapter";
@@ -15,7 +14,7 @@ import AppHeader, { type RecentFileItem } from "./components/AppHeader.vue";
 import ReaderSidebar from "./components/ReaderSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import ReaderMain from "./components/ReaderMain.vue";
-import AppAlertHost from "./components/AppAlertHost.vue";
+import AppDialogHost from "./components/AppDialogHost.vue";
 import AppOverlays from "./components/AppOverlays.vue";
 import type { SettingsApplyPayload } from "./components/SettingsPanel.vue";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
@@ -25,16 +24,7 @@ import {
   mergeAiSkillsEnabled,
 } from "@shared/aiSkills";
 import { bookmarkNoteInputRefKey } from "./injectionKeys";
-import {
-  extensionHostBridgeKey,
-  useExtensionHostBridge,
-} from "./composables/useExtensionHostBridge";
-import {
-  extensionTabKey,
-  type ReaderSidebarTab,
-} from "./constants/readerSidebarTab";
-import { colortxtExtensionUrl } from "./utils/colortxtExtensionUrl";
-import type { SidebarExtensionContribution } from "./components/ReaderSidebar.vue";
+import type { ReaderSidebarTab } from "./constants/readerSidebarTab";
 import { useAppBookmarkPins } from "./composables/useAppBookmarkPins";
 import { useAppChapterListSync } from "./composables/useAppChapterListSync";
 import { useAppChapterNavigation } from "./composables/useAppChapterNavigation";
@@ -110,7 +100,7 @@ import {
   createDefaultShortcutBindings,
   type ShortcutBindingMap,
 } from "./services/shortcutRegistry";
-import { appAlert } from "./services/appAlert";
+import { appAlert } from "./services/appDialog";
 import { mergeShortcutBindings } from "./services/shortcutUtils";
 import {
   syncTxtFilesCategoriesAfterCatalogEdit,
@@ -228,49 +218,17 @@ const totalLineCount = ref(0);
 const chapters = ref<Chapter[]>([]);
 const activeChapterIdx = ref<number>(-1);
 const showChapterCounts = ref(defaultShowChapterCounts);
+/** AI 阅读助手工具栏：深度思考 / 防剧透（持久化至 colorTxt.ui.settings） */
+const aiAssistantDeepThinking = ref(false);
+const aiAssistantSpoilerSafe = ref(false);
 const sidebarTab = ref<ReaderSidebarTab>("files");
 
-const extensionListSnapshot = ref<
-  Awaited<ReturnType<typeof window.colorTxt.extensionList>>
->([]);
-const extensionViewReloadNonce = ref(0);
-
-async function refreshExtensionListFromMain() {
-  try {
-    extensionListSnapshot.value = await window.colorTxt.extensionList();
-    await window.colorTxt.extensionRefreshRoots();
-  } catch {
-    extensionListSnapshot.value = [];
-  }
-}
-
-const extensionSidebarContributions = computed<
-  SidebarExtensionContribution[]
->(() => {
-  const rows = extensionListSnapshot.value;
-  const out: SidebarExtensionContribution[] = [];
-  for (const row of rows) {
-    if (!row.enabled) continue;
-    for (const v of row.views) {
-      out.push({
-        tabKey: extensionTabKey(row.name, v.viewId),
-        title: v.viewTitle,
-        iconUrl: colortxtExtensionUrl(row.name, v.containerIcon),
-        entryUrl: colortxtExtensionUrl(row.name, v.entry),
-        extId: row.name,
-        viewId: v.viewId,
-      });
-    }
-  }
-  return out;
-});
-
-function bumpExtensionViewReload() {
-  extensionViewReloadNonce.value++;
-}
-
 onMounted(() => {
-  void refreshExtensionListFromMain();
+  /** 旧版侧栏曾含扩展视图 tab（`ext:`）或设置「扩展」占位 id */
+  const t = sidebarTab.value as string;
+  if (t === "extensions" || t.startsWith("ext:")) {
+    sidebarTab.value = "files";
+  }
 });
 type SidebarSearchResult = {
   physicalLine: number;
@@ -380,7 +338,7 @@ const ebookConvertOutputDir = ref(
     }
   })(),
 );
-/** ReadAny 风格 AI 技能开关（设置 → 技能） */
+/** AI 技能开关（设置 → 技能） */
 const aiSkillsEnabled = ref<Record<string, boolean>>(
   mergeAiSkillsEnabled(undefined, []),
 );
@@ -548,6 +506,8 @@ const persistence = useAppPersistence({
   aiSkillsEnabled,
   aiSkillOverrides,
   aiCustomSkills,
+  aiAssistantDeepThinking,
+  aiAssistantSpoilerSafe,
 });
 const {
   persistSettings,
@@ -571,6 +531,9 @@ watch(fileListEditing, (editing, wasEditing) => {
     persistFileListCache();
   }
 });
+
+watch(aiAssistantDeepThinking, () => persistSettings());
+watch(aiAssistantSpoilerSafe, () => persistSettings());
 
 /** 加载期底栏/侧栏：当前文件的存档进度仅来自 file.meta */
 const archivedProgressForCurrentFile = computed(() => {
@@ -696,13 +659,13 @@ async function onRenameFilePath(payload: { oldPath: string; newName: string }) {
   });
 
   recentFiles.value = recentFiles.value.map((item) =>
-    fileHistoryKey(item.path) === oldKey
-      ? { ...item, path: nextPath }
-      : item,
+    fileHistoryKey(item.path) === oldKey ? { ...item, path: nextPath } : item,
   );
 
   // file.meta 迁移：优先按旧路径精确匹配；若不存在再按旧文件名兜底（仅唯一候选时迁移，避免同名串数据）。
-  let prevMeta = fileMetaRecords.value.find((m) => fileHistoryKey(m.path) === oldKey);
+  let prevMeta = fileMetaRecords.value.find(
+    (m) => fileHistoryKey(m.path) === oldKey,
+  );
   if (!prevMeta) {
     const oldNameKey = fileNameKey(oldPath);
     const fallbackCandidates = fileMetaRecords.value.filter(
@@ -770,7 +733,9 @@ function onOpenFileInNewWindow(path: string) {
 
 function onClearFileMeta(path: string) {
   const key = fileHistoryKey(path);
-  const next = fileMetaRecords.value.filter((m) => fileHistoryKey(m.path) !== key);
+  const next = fileMetaRecords.value.filter(
+    (m) => fileHistoryKey(m.path) !== key,
+  );
   if (next.length === fileMetaRecords.value.length) return;
   fileMetaRecords.value = next;
   if (metaProgressByPathKey.value.has(key)) {
@@ -965,45 +930,10 @@ const {
   applyChapterMatchRules,
 } = chapterNav;
 
-const extensionHostBridge = useExtensionHostBridge({
-  readerRef,
-  chapters,
-  activeChapterIdx,
-  lastProbeLine,
-  currentFile,
-  currentTheme,
-  jumpToChapter,
-});
-provide(extensionHostBridgeKey, extensionHostBridge);
-
-watch(currentFile, (v, prev) => {
-  if (prev && !v) extensionHostBridge.notifyFileClosed();
-});
-
-watch(
-  () => [loading.value, currentFile.value, totalLineCount.value] as const,
-  ([ld, cf, lines]) => {
-    if (cf && !ld && lines > 0) {
-      void nextTick(() => extensionHostBridge.notifyFileStreamEnd());
-    }
-  },
-);
-
-watch(
-  chapters,
-  () => {
-    extensionHostBridge.notifyChaptersRebuilt();
-  },
-  { deep: true },
-);
-
-function onReaderExtensionSelectionChange(payload: {
-  text: string;
-  startLine: number;
-  endLine: number;
-  isEmpty: boolean;
-}) {
-  extensionHostBridge.notifySelectionChanged(payload);
+/** AI 助手跳转章节：未激活书钉时先记住当前滚动位置（与查找打开前一致），再跳转 */
+function jumpToChapterFromAiAssistant(ch: Chapter) {
+  ensurePinBeforeRevealFindWidget();
+  jumpToChapter(ch);
 }
 
 const readerUi = useAppReaderUiPrefs({
@@ -1189,7 +1119,11 @@ function isWordChar(ch: string): boolean {
   return /[0-9A-Za-z_]/.test(ch);
 }
 
-function isWholeWordBoundary(text: string, start: number, end: number): boolean {
+function isWholeWordBoundary(
+  text: string,
+  start: number,
+  end: number,
+): boolean {
   const before = start > 0 ? text[start - 1] : "";
   const after = end < text.length ? text[end] : "";
   const leftOk = before === "" || !isWordChar(before);
@@ -1350,15 +1284,19 @@ function onJumpToSearchResult(item: SidebarSearchResult) {
   const endColumn = primaryRange
     ? Math.max(startColumn + 1, primaryRange.end + 1)
     : startColumn + 1;
-  readerRef.value?.setInlineSearchState?.(searchQuery.value, {
-    lineNumber: displayLine,
-    startColumn,
-    endColumn,
-  }, {
-    caseSensitive: searchMatchCase.value,
-    wholeWord: searchWholeWord.value,
-    useRegex: searchUseRegex.value,
-  });
+  readerRef.value?.setInlineSearchState?.(
+    searchQuery.value,
+    {
+      lineNumber: displayLine,
+      startColumn,
+      endColumn,
+    },
+    {
+      caseSensitive: searchMatchCase.value,
+      wholeWord: searchWholeWord.value,
+      useRegex: searchUseRegex.value,
+    },
+  );
   hasInlineSearchHighlight.value = true;
   readerRef.value?.jumpToSearchMatchCentered?.(
     displayLine,
@@ -1674,6 +1612,11 @@ useAppShellThemeWatch({
           :current-file-path="currentFile"
           :physical-reader-path="physicalReaderPath"
           :reader-main-ref="readerRef"
+          v-model:deep-thinking="aiAssistantDeepThinking"
+          v-model:spoiler-safe="aiAssistantSpoilerSafe"
+          :ai-skills-enabled="aiSkillsEnabled"
+          :ai-skill-overrides="aiSkillOverrides"
+          :ai-custom-skills="aiCustomSkills"
           :chapters="chapters"
           :active-chapter-idx="activeChapterIdx"
           :format-char-count="formatCharCount"
@@ -1681,6 +1624,7 @@ useAppShellThemeWatch({
           @import-dropped-paths="onImportDroppedPathsFromList"
           @open-file="openFileFromSidebar"
           @jump-to-chapter="jumpToChapter"
+          @jump-to-chapter-from-ai="jumpToChapterFromAiAssistant"
           @clear-file-list="clearFileList"
           @clear-file-list-category="clearFileListForCategory"
           @remove-file-list="removeFileList"
@@ -1715,10 +1659,6 @@ useAppShellThemeWatch({
           @request-collapse-panel="showSidebar = false"
           @open-color-scheme="showColorSchemePanel = true"
           @open-settings="showSettingsPanel = true"
-          :extension-contributions="extensionSidebarContributions"
-          :extension-reload-nonce="extensionViewReloadNonce"
-          @extensions-mutated="refreshExtensionListFromMain"
-          @reload-extension-views="bumpExtensionViewReload"
         />
         <!-- 放在侧栏容器内，避免移到拖条时触发 @mouseleave 导致全屏侧栏收起 -->
         <div
@@ -1775,9 +1715,6 @@ useAppShellThemeWatch({
           @viewport-visual-progress-change="onViewportVisualProgressChange"
           @add-highlight-term="onAddHighlightTerm"
           @remove-highlight-term="onRemoveHighlightTerm"
-          @reader-extension-selection-change="
-            onReaderExtensionSelectionChange
-          "
         />
         <div
           v-if="showReaderIdleHint"
@@ -1834,7 +1771,7 @@ useAppShellThemeWatch({
       />
     </div>
 
-    <AppAlertHost />
+    <AppDialogHost />
 
     <AppOverlays
       ref="appOverlaysRef"

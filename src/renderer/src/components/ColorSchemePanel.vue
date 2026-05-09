@@ -39,9 +39,7 @@ const activeTab = ref<"reader" | "highlight">("reader");
 const draftLight = ref<ReaderSurfacePalette>({ ...defaultReaderPaletteLight });
 const draftDark = ref<ReaderSurfacePalette>({ ...defaultReaderPaletteDark });
 
-const draftHighlightLight = ref<string[]>([
-  ...DEFAULT_HIGHLIGHT_COLORS_LIGHT,
-]);
+const draftHighlightLight = ref<string[]>([...DEFAULT_HIGHLIGHT_COLORS_LIGHT]);
 const draftHighlightDark = ref<string[]>([...DEFAULT_HIGHLIGHT_COLORS_DARK]);
 
 const isLightShell = computed(() => props.currentTheme === "vs");
@@ -61,17 +59,17 @@ const displaySurface = computed(
   }),
 );
 
-const previewBoxStyle = computed((): StyleValue => ({
-  backgroundColor: displaySurface.value.readerBg,
-  fontFamily: props.monacoFontFamily,
-  fontSize: "18px",
-  lineHeight: 1.5,
-}));
+const previewBoxStyle = computed(
+  (): StyleValue => ({
+    backgroundColor: displaySurface.value.readerBg,
+    fontFamily: props.monacoFontFamily,
+    fontSize: "18px",
+    lineHeight: 1.5,
+  }),
+);
 
 const highlightReaderBg = computed(() =>
-  isLightShell.value
-    ? draftLight.value.readerBg
-    : draftDark.value.readerBg,
+  isLightShell.value ? draftLight.value.readerBg : draftDark.value.readerBg,
 );
 
 const activeHighlightList = computed(() =>
@@ -308,7 +306,7 @@ watch(activeTab, (tab) => {
 
 <style scoped>
 :deep(.colorSchemePanel) {
-  height: 567px;
+  height: 560px;
   max-height: unset;
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, defineModel, ref } from "vue";
 import type { Chapter } from "../chapter";
 import { useReaderSidebarLists } from "../composables/useReaderSidebarLists";
 import type {
@@ -18,25 +18,14 @@ import BookmarkListPanel from "./BookmarkListPanel.vue";
 import HighlightListPanel from "./HighlightListPanel.vue";
 import AiAssistantPanel from "./AiAssistantPanel.vue";
 import SearchPanel from "./SearchPanel.vue";
-import ExtensionsPanel from "./ExtensionsPanel.vue";
-import ExtensionSidebarIframe from "./ExtensionSidebarIframe.vue";
-import ExtensionActivityIcon from "./ExtensionActivityIcon.vue";
 import type ReaderMain from "./ReaderMain.vue";
+import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
 import { icons } from "../icons";
-import type { ReaderCoreSidebarTab, ReaderSidebarTab } from "../constants/readerSidebarTab";
+import type { ReaderSidebarTab } from "../constants/readerSidebarTab";
 import {
   collectFsPathsFromDataTransfer,
   dataTransferLikelyHasExternalFiles,
 } from "../utils/dragDropFsPaths";
-
-export type SidebarExtensionContribution = {
-  tabKey: string;
-  title: string;
-  iconUrl: string;
-  entryUrl: string;
-  extId: string;
-  viewId: string;
-};
 
 const props = withDefaults(
   defineProps<{
@@ -90,12 +79,14 @@ const props = withDefaults(
     fileCategory: string;
     fileSort: FileSortMode;
     fileCategoryCatalog: FileCategoryDefinition[];
-    extensionContributions?: SidebarExtensionContribution[];
-    extensionReloadNonce?: number;
     /** AI 助手：阅读器实例（取全文建索引） */
     readerMainRef?: InstanceType<typeof ReaderMain> | null;
     /** 磁盘上的当前 txt 路径（电子书转换后与逻辑路径可能不同） */
     physicalReaderPath?: string | null;
+    /** 设置 → 技能，传入 AI 阅读助手 */
+    aiSkillsEnabled?: Record<string, boolean>;
+    aiSkillOverrides?: Record<string, AiSkillUserOverride>;
+    aiCustomSkills?: AiCustomSkill[];
   }>(),
   {
     panelExpanded: true,
@@ -119,12 +110,20 @@ const props = withDefaults(
     hasInlineSearchHighlight: false,
     highlightPreviewBg: "var(--reader-bg, var(--bg))",
     monacoFontFamily: "",
-    extensionContributions: () => [],
-    extensionReloadNonce: 0,
     readerMainRef: null,
     physicalReaderPath: null,
+    aiSkillsEnabled: () => ({}),
+    aiSkillOverrides: () => ({}),
+    aiCustomSkills: () => [],
   },
 );
+
+const deepThinking = defineModel<boolean>("deepThinking", {
+  default: false,
+});
+const spoilerSafe = defineModel<boolean>("spoilerSafe", {
+  default: false,
+});
 
 const emit = defineEmits<{
   "update:activeTab": [value: ReaderSidebarTab];
@@ -135,6 +134,8 @@ const emit = defineEmits<{
   importDroppedPaths: [paths: string[]];
   openFile: [item: SidebarFileItem];
   jumpToChapter: [chapter: Chapter];
+  /** AI 阅读助手内章节按钮：父级可在跳转前自动点亮书钉 */
+  jumpToChapterFromAi: [chapter: Chapter];
   jumpToBookmark: [line: number];
   clearFileList: [];
   clearFileListCategory: [categoryFilter: string];
@@ -178,8 +179,6 @@ const emit = defineEmits<{
       ranges: Array<{ start: number; end: number }>;
     },
   ];
-  extensionsMutated: [];
-  reloadExtensionViews: [];
 }>();
 
 const {
@@ -199,11 +198,6 @@ const {
 const activityBarWidthPx = `${SIDEBAR_ACTIVITY_BAR_WIDTH}px`;
 
 const activePanelTitle = computed(() => {
-  if (props.activeTab === "extensions") return "扩展";
-  const hit = props.extensionContributions.find(
-    (c) => c.tabKey === props.activeTab,
-  );
-  if (hit) return hit.title;
   switch (props.activeTab) {
     case "files":
       return "文件";
@@ -235,21 +229,12 @@ const highlightTabIconMuted = computed(() => {
   return !(hasFile && hasHighlights);
 });
 
-function onPrimaryTabClick(tab: ReaderCoreSidebarTab) {
+function onPrimaryTabClick(tab: ReaderSidebarTab) {
   if (props.panelExpanded && props.activeTab === tab) {
     emit("requestCollapsePanel");
     return;
   }
   emit("update:activeTab", tab);
-  if (!props.panelExpanded) emit("requestExpandPanel");
-}
-
-function onExtensionViewTabClick(tabKey: string) {
-  if (props.panelExpanded && props.activeTab === tabKey) {
-    emit("requestCollapsePanel");
-    return;
-  }
-  emit("update:activeTab", tabKey);
   if (!props.panelExpanded) emit("requestExpandPanel");
 }
 
@@ -261,12 +246,6 @@ function bindFileListRef(value: any) {
 }
 function bindBookmarkListRef(value: any) {
   bookmarkListRef.value = value;
-}
-
-const extensionsPanelRef = ref<InstanceType<typeof ExtensionsPanel> | null>(null);
-
-function onAddExtensionClick() {
-  extensionsPanelRef.value?.openAddDialog();
 }
 
 const sidebarDragOverlayVisible = ref(false);
@@ -392,32 +371,8 @@ defineExpose({
         <span class="activityIcon" v-html="icons.aiChat"></span>
       </button>
       </div>
-      <div class="activityExtensionTabs">
-        <button
-          v-for="c in extensionContributions"
-          :key="c.tabKey"
-          type="button"
-          class="activityTabBtn"
-          :class="{ active: panelExpanded && activeTab === c.tabKey }"
-          :title="c.title"
-          :aria-label="c.title"
-          @click="onExtensionViewTabClick(c.tabKey)"
-        >
-          <ExtensionActivityIcon class="activityExtIconHost" :url="c.iconUrl" />
-        </button>
-      </div>
       <div class="activityBarSpacer" aria-hidden="true" />
       <div class="activitySecondaryTabs">
-        <button
-          type="button"
-          class="activityTabBtn"
-          :class="{ active: panelExpanded && activeTab === 'extensions' }"
-          title="扩展"
-          aria-label="扩展"
-          @click="onPrimaryTabClick('extensions')"
-        >
-          <span class="activityIcon" v-html="icons.extension"></span>
-        </button>
         <button
           type="button"
           class="activityTabBtn color"
@@ -448,13 +403,6 @@ defineExpose({
         >
           选择目录
         </button>
-        <button
-          v-else-if="activeTab === 'extensions'"
-          class="btn"
-          @click="onAddExtensionClick"
-        >
-          添加扩展
-        </button>
         <div v-else-if="activeTab === 'chapters'" class="sidebarCountToggle">
           <span class="sidebarCountToggleLabel">字数</span>
           <SwitchToggle
@@ -464,16 +412,6 @@ defineExpose({
             @update:model-value="emit('update:showChapterCounts', $event)"
           />
         </div>
-        <button
-          v-else-if="activeTab === 'aiAssistant'"
-          type="button"
-          class="activityTabBtn sidebarHeaderActivityBtn"
-          title="收起侧栏"
-          aria-label="收起侧栏"
-          @click="emit('requestCollapsePanel')"
-        >
-          <span class="activityIcon" v-html="icons.close" />
-        </button>
         <div v-else></div>
       </div>
       <ChapterListPanel
@@ -554,30 +492,13 @@ defineExpose({
           :chapters="chapters"
           :active-chapter-idx="activeChapterIdx"
           :reader-main-ref="readerMainRef ?? null"
-          @jump-to-chapter="emit('jumpToChapter', $event)"
-        />
-      </div>
-      <div
-        v-for="c in extensionContributions"
-        v-show="activeTab === c.tabKey"
-        :key="c.tabKey"
-        class="extensionViewHost"
-      >
-        <ExtensionSidebarIframe
-          :src="c.entryUrl"
-          :ext-id="c.extId"
-          :view-id="c.viewId"
-          :reload-nonce="extensionReloadNonce"
-        />
-      </div>
-      <div
-        v-show="activeTab === 'extensions'"
-        class="extensionsPanelOuter"
-      >
-        <ExtensionsPanel
-          ref="extensionsPanelRef"
-          @did-change="emit('extensionsMutated')"
-          @reload-views="emit('reloadExtensionViews')"
+          :assistant-panel-visible="activeTab === 'aiAssistant'"
+          v-model:deep-thinking="deepThinking"
+          v-model:spoiler-safe="spoilerSafe"
+          :ai-skills-enabled="aiSkillsEnabled"
+          :ai-skill-overrides="aiSkillOverrides"
+          :ai-custom-skills="aiCustomSkills"
+          @jump-to-chapter="emit('jumpToChapterFromAi', $event)"
         />
       </div>
       <SearchPanel
@@ -678,31 +599,10 @@ defineExpose({
   min-height: 0;
 }
 
-.activityExtensionTabs {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-}
-
 .activitySecondaryTabs {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-}
-
-.extensionViewHost {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.extensionsPanelOuter {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
 }
 
 .activityTabBtn {
