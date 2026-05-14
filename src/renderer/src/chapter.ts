@@ -12,27 +12,18 @@ export type ChapterMatchRule = {
   builtIn: boolean;
 };
 
-const cnNum = "零一二三四五六七八九十百千万两0-9０-９";
-const unit = "章回卷节集部篇";
-
-const DEFAULT_CHAPTER_PATTERN = `^\\s*(第[${cnNum}]{1,12}[${unit}])\\s*(.{0,40})\\s*$`;
-const DEFAULT_ALT_CHAPTER_PATTERN =
-  "^\\s*(序章|楔子|引子|尾声|后记|番外|完结感言)\\s*(.{0,40})\\s*$";
-/** 数字顿号序号章节，如「1、章节名」 */
-const DEFAULT_NUM_ORDERED_PATTERN = "^\\s*(\\d+、)\\s*(.{0,40})\\s*$";
+import {
+  CHAPTER_MATCH_BUILTIN_ALT_EXAMPLES,
+  CHAPTER_MATCH_BUILTIN_ALT_PATTERN,
+  CHAPTER_MATCH_BUILTIN_MAIN_EXAMPLES,
+  CHAPTER_MATCH_BUILTIN_MAIN_PATTERN,
+  CHAPTER_MATCH_BUILTIN_NUM_ORDERED_EXAMPLES,
+  CHAPTER_MATCH_BUILTIN_NUM_ORDERED_PATTERN,
+} from "@shared/chapterMatchBuiltinPatterns";
 
 const BUILTIN_RULE_MAIN_ID = "builtin-main";
 const BUILTIN_RULE_ALT_ID = "builtin-alt";
 const BUILTIN_RULE_NUM_ORDERED_ID = "builtin-num-ordered";
-
-const DEFAULT_EXAMPLES_MAIN = [
-  "第一章 标题",
-  "第1章",
-  "第十回 标题",
-  "第二卷 标题",
-];
-const DEFAULT_EXAMPLES_ALT = ["序章", "番外 标题", "后记"];
-const DEFAULT_EXAMPLES_NUM_ORDERED = ["1、标题", "0001、标题", "1、"];
 
 let rulesState: ChapterMatchRule[] = createDefaultChapterRulesInternal();
 let enabledRegexList: RegExp[] = [];
@@ -41,23 +32,23 @@ function createDefaultChapterRulesInternal(): ChapterMatchRule[] {
   return [
     {
       id: BUILTIN_RULE_MAIN_ID,
-      pattern: DEFAULT_CHAPTER_PATTERN,
+      pattern: CHAPTER_MATCH_BUILTIN_MAIN_PATTERN,
       enabled: true,
-      examples: [...DEFAULT_EXAMPLES_MAIN],
+      examples: [...CHAPTER_MATCH_BUILTIN_MAIN_EXAMPLES],
       builtIn: true,
     },
     {
       id: BUILTIN_RULE_ALT_ID,
-      pattern: DEFAULT_ALT_CHAPTER_PATTERN,
+      pattern: CHAPTER_MATCH_BUILTIN_ALT_PATTERN,
       enabled: true,
-      examples: [...DEFAULT_EXAMPLES_ALT],
+      examples: [...CHAPTER_MATCH_BUILTIN_ALT_EXAMPLES],
       builtIn: true,
     },
     {
       id: BUILTIN_RULE_NUM_ORDERED_ID,
-      pattern: DEFAULT_NUM_ORDERED_PATTERN,
+      pattern: CHAPTER_MATCH_BUILTIN_NUM_ORDERED_PATTERN,
       enabled: false,
-      examples: [...DEFAULT_EXAMPLES_NUM_ORDERED],
+      examples: [...CHAPTER_MATCH_BUILTIN_NUM_ORDERED_EXAMPLES],
       builtIn: true,
     },
   ];
@@ -73,20 +64,20 @@ export function getBuiltinRuleDefaults(
 ): { pattern: string; examples: string[] } | null {
   if (ruleId === BUILTIN_RULE_MAIN_ID) {
     return {
-      pattern: DEFAULT_CHAPTER_PATTERN,
-      examples: [...DEFAULT_EXAMPLES_MAIN],
+      pattern: CHAPTER_MATCH_BUILTIN_MAIN_PATTERN,
+      examples: [...CHAPTER_MATCH_BUILTIN_MAIN_EXAMPLES],
     };
   }
   if (ruleId === BUILTIN_RULE_ALT_ID) {
     return {
-      pattern: DEFAULT_ALT_CHAPTER_PATTERN,
-      examples: [...DEFAULT_EXAMPLES_ALT],
+      pattern: CHAPTER_MATCH_BUILTIN_ALT_PATTERN,
+      examples: [...CHAPTER_MATCH_BUILTIN_ALT_EXAMPLES],
     };
   }
   if (ruleId === BUILTIN_RULE_NUM_ORDERED_ID) {
     return {
-      pattern: DEFAULT_NUM_ORDERED_PATTERN,
-      examples: [...DEFAULT_EXAMPLES_NUM_ORDERED],
+      pattern: CHAPTER_MATCH_BUILTIN_NUM_ORDERED_PATTERN,
+      examples: [...CHAPTER_MATCH_BUILTIN_NUM_ORDERED_EXAMPLES],
     };
   }
   return null;

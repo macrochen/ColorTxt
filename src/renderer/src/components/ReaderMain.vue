@@ -67,6 +67,7 @@ import { DEFAULT_HIGHLIGHT_COLORS_LIGHT } from "../constants/highlightColors";
 import type { HighlightWordsByIndex } from "../stores/fileMetaStore";
 import { floorReadingPercentFromScrollRatio } from "../utils/format";
 import {
+  hasEscBeforeModalLayers,
   hasModalOnStack,
   READER_HL_FLOAT_ROOT_Z_INDEX,
   subscribeModalStackChange,
@@ -1678,7 +1679,9 @@ watch(
 onMounted(() => {
   unsubModalStack = subscribeModalStackChange(() => {
     if (!hlTipVisible.value && !hlPickerVisible.value) return;
-    if (hasModalOnStack()) closeHighlightFloatUi();
+    if (hasModalOnStack() || hasEscBeforeModalLayers()) {
+      closeHighlightFloatUi();
+    }
   });
 });
 </script>

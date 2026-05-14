@@ -19,13 +19,18 @@ import { yieldToUi } from "../ebook/yieldToUi";
 import { useAppChapterListSync } from "./useAppChapterListSync";
 import { useTxtStreamPipeline } from "./useTxtStreamPipeline";
 import type { Chapter } from "../chapter";
-import { sessionKey, fileListKey } from "../constants/appUi";
 import {
   FILE_CATEGORY_FILTER_ALL,
   displayNameForCategoryFilter,
   filePathsMatchingCategoryFilter,
   normalizeCategoryFilter,
 } from "../constants/fileCategories";
+import {
+  APP_DISPLAY_NAME,
+  sessionKey,
+  fileListKey,
+} from "../constants/appUi";
+import { COLOR_TXT_OPEN_BOOK_EXTENSIONS } from "@shared/colorTxtOpenSaveDialog";
 import { fileHistoryKey } from "../stores/recentHistoryStore";
 
 /** 等浏览器下一帧再续，让 Monaco 在空文档上完成绘制，避免黏性章节标题滞留 */
@@ -242,8 +247,17 @@ export function useAppFileSession(deps: {
 
   async function clearFileList() {
     if (!window.colorTxt) return;
-    const confirmed = await window.colorTxt.confirmClearFileList();
-    if (!confirmed) return;
+    const r = await window.colorTxt.showMessageBox({
+      type: "warning",
+      title: APP_DISPLAY_NAME,
+      buttons: ["取消", "清空"],
+      defaultId: 1,
+      cancelId: 0,
+      message: "是否要清空文件列表？",
+      detail: "不会关闭当前正在阅读的文件。",
+      noLink: true,
+    });
+    if (r.response !== 1) return;
     deps.txtFiles.value = [];
     persistFileListCache();
   }
@@ -257,11 +271,19 @@ export function useAppFileSession(deps: {
     }
     const paths = filePathsMatchingCategoryFilter(deps.txtFiles.value, norm);
     if (paths.length === 0) return;
-    const confirmed = await window.colorTxt.confirmClearFileListCategory({
-      categoryLabel: displayNameForCategoryFilter(norm),
-      count: paths.length,
+    const label = displayNameForCategoryFilter(norm);
+    const n = paths.length;
+    const r = await window.colorTxt.showMessageBox({
+      type: "warning",
+      title: APP_DISPLAY_NAME,
+      buttons: ["取消", "清空分类"],
+      defaultId: 1,
+      cancelId: 0,
+      message: `是否从文件列表中移除「${label}」下的 ${n} 个文件？`,
+      detail: "不会关闭当前正在阅读的文件。",
+      noLink: true,
     });
-    if (!confirmed) return;
+    if (r.response !== 1) return;
     removeFileList(paths);
   }
 
@@ -448,7 +470,17 @@ export function useAppFileSession(deps: {
       await appAlert("preload 未注入：请重启应用（或检查主进程 preload 路径）");
       return;
     }
-    const filePath = await window.colorTxt.openTxtDialog();
+    const r = await window.colorTxt.showOpenDialog({
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "电子书",
+          extensions: [...COLOR_TXT_OPEN_BOOK_EXTENSIONS],
+        },
+      ],
+    });
+    const filePath =
+      r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
     if (!filePath) return;
     await openFilePath(filePath);
   }

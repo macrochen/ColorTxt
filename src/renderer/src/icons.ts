@@ -58,6 +58,11 @@ import stopIcon from "./assets/stop.svg?raw";
 import thinkingPulseIcon from "./assets/thinking_pulse.svg?raw";
 import foldChevronIcon from "./assets/fold_chevron.svg?raw";
 import jumpBottomIcon from "./assets/jump_bottom.svg?raw";
+import characterIcon from "./assets/character.svg?raw";
+import genderMaleIcon from "./assets/male.svg?raw";
+import genderFemaleIcon from "./assets/female.svg?raw";
+import genderUnknownIcon from "./assets/unknown.svg?raw";
+import warningIcon from "./assets/warning.svg?raw";
 
 export const icons = {
   dark: darkIcon,
@@ -121,6 +126,11 @@ export const icons = {
   thinkingPulse: thinkingPulseIcon,
   /** 折叠面板标题右侧 chevron（默认向下，展开时旋转为向上） */
   foldChevron: foldChevronIcon,
-  /** AI 阅读助手「回到底部」 */
   jumpBottom: jumpBottomIcon,
+  character: characterIcon,
+  genderMale: genderMaleIcon,
+  genderFemale: genderFemaleIcon,
+  genderUnknown: genderUnknownIcon,
+  /** 阅读助手「用户取消」、角色卡检索提示等 */
+  warning: warningIcon,
 } as const;

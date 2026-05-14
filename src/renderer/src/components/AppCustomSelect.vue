@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  computed,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -7,6 +8,7 @@ import {
   watch,
   useTemplateRef,
 } from "vue";
+import { icons } from "../icons";
 
 export type CustomSelectItem =
   | {
@@ -38,8 +40,10 @@ const props = withDefaults(
   defineProps<{
     /** 当前选中项 id */
     modelValue: string;
-    /** 触发器上展示文案 */
+    /** 触发器上展示文案（有内容时）；为空且设置了 `placeholder` 时显示占位提示 */
     displayLabel: string;
+    /** 未选中或 `displayLabel` 为空时在触发器上显示（muted 样式，不写入 modelValue） */
+    placeholder?: string;
     /** 触发器主标签后的附加文案（数量、说明等），样式同 .appShellMenuItemSuffix */
     displaySuffix?: string;
     /**
@@ -68,6 +72,7 @@ const props = withDefaults(
     minPanelWidth: 0,
     triggerPrefixHtml: "",
     categoryColorMarks: false,
+    placeholder: "",
   },
 );
 
@@ -279,6 +284,16 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   if (c) return c;
   return "var(--border)";
 }
+
+const triggerLabelIsPlaceholder = computed(
+  () => !props.displayLabel.trim() && Boolean(props.placeholder.trim()),
+);
+
+const triggerMainText = computed(() => {
+  if (props.displayLabel.trim()) return props.displayLabel;
+  if (props.placeholder.trim()) return props.placeholder;
+  return "\u00a0";
+});
 </script>
 
 <template>
@@ -306,13 +321,24 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
           v-html="triggerPrefixHtml"
         />
         <span class="customSelectTriggerLabelWithCount">
-          <span class="customSelectTriggerLabel">{{ displayLabel }}</span>
+          <span
+            class="customSelectTriggerLabel"
+            :class="{
+              'customSelectTriggerLabel--placeholder':
+                triggerLabelIsPlaceholder,
+            }"
+            >{{ triggerMainText }}　</span
+          >
           <span v-if="displaySuffix?.trim()" class="appShellMenuItemSuffix">{{
             displaySuffix
           }}</span>
         </span>
       </span>
-      <span class="customSelectChevron" aria-hidden="true">▾</span>
+      <span
+        class="svg customSelectChevron"
+        aria-hidden="true"
+        v-html="icons.foldChevron"
+      />
     </button>
     <Teleport to="body">
       <div
@@ -460,7 +486,6 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   min-width: 0;
   flex: 1;
 }
-/* 与全局 .btn 一致；展开时保持与 :hover 相同（accent 描边/字色） */
 .customSelectTrigger.btn {
   flex-shrink: 1;
   min-width: 0;
@@ -474,7 +499,7 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   gap: 6px;
   text-align: left;
   white-space: nowrap;
-  padding: 4px 4px 4px 8px;
+  padding: 4px 8px;
 }
 .customSelectTrigger[aria-expanded="true"] {
   color: var(--accent);
@@ -528,12 +553,27 @@ function itemMarkBackground(it: Extract<CustomSelectItem, { kind: "item" }>) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.customSelectTriggerLabel--placeholder {
+  color: var(--muted);
+  font-weight: 400;
+}
+/* 与 AiAssistantChatMessages `.aiFoldChevron` 一致 */
 .customSelectChevron {
   flex-shrink: 0;
   margin-left: auto;
-  font-size: 16px;
-  line-height: 16px;
-  opacity: 0.7;
+  color: color-mix(in srgb, var(--muted) 85%, var(--fg));
+  transition: transform 0.22s ease;
+}
+.customSelectChevron :deep(svg) {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+.customSelectChevron :deep(svg path) {
+  fill: currentColor;
+}
+.customSelectTrigger[aria-expanded="true"] .customSelectChevron {
+  transform: rotate(180deg);
 }
 .customSelectPanel {
   position: fixed;

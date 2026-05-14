@@ -23,6 +23,8 @@ type StackEntry = {
 }
 
 const stack: StackEntry[] = []
+/** 须在模态栈之前响应 ESC 的层（如大图灯箱），栈顶优先 */
+const escBeforeModalCloseStack: Array<() => void> = []
 let nextInstanceId = 0
 let escListenerAttached = false
 
@@ -38,12 +40,46 @@ export function subscribeModalStackChange(listener: () => void): () => void {
   return () => modalStackListeners.delete(listener)
 }
 
-/** 供全屏 ESC 等逻辑判断：有模态时由本模块 document 监听单独 resolve，避免与外层重复关闭多层 */
+/** 供全屏 ESC 等：有模态或有「先于模态」的 ESC 层时，不交给外层处理 */
+export function hasModalOrEscBeforeModalLayer(): boolean {
+  return stack.length > 0 || escBeforeModalCloseStack.length > 0
+}
+
+/** 仅模态栈（不含灯箱等 ESC 前置层） */
 export function hasModalOnStack(): boolean {
   return stack.length > 0
 }
 
 export type ModalStackEscResult = "closed" | "swallow" | "none"
+
+/** 先于 AppModal 消费一次 ESC（栈顶关闭）；无层则 false */
+function tryCloseEscBeforeModalTop(): boolean {
+  const top = escBeforeModalCloseStack[escBeforeModalCloseStack.length - 1]
+  if (!top) return false
+  top()
+  return true
+}
+
+/**
+ * 注册在模态对话框之前响应 Esc 的关闭回调（如 `ReaderImageLightbox`）。
+ * 打开时 push，须在关闭时调用返回的 unregister（与 `registerModal` 对称）。
+ */
+export function pushEscBeforeModal(close: () => void): () => void {
+  escBeforeModalCloseStack.push(close)
+  ensureEscListener()
+  emitModalStackChange()
+  return () => {
+    const i = escBeforeModalCloseStack.lastIndexOf(close)
+    if (i >= 0) escBeforeModalCloseStack.splice(i, 1)
+    removeEscListenerIfIdle()
+    emitModalStackChange()
+  }
+}
+
+/** 供全屏 ESC 等逻辑判断 */
+export function hasEscBeforeModalLayers(): boolean {
+  return escBeforeModalCloseStack.length > 0
+}
 
 /** 栈顶无模态为 none；禁止 ESC 关闭为 swallow（应吞掉事件）；否则关闭并 closed */
 export function resolveEscapeOnModalStack(): ModalStackEscResult {
@@ -61,6 +97,11 @@ export function tryCloseTopModalFromEsc(): boolean {
 
 function onDocumentKeydown(ev: KeyboardEvent) {
   if (ev.key !== "Escape") return
+  if (tryCloseEscBeforeModalTop()) {
+    ev.preventDefault()
+    ev.stopPropagation()
+    return
+  }
   const r = resolveEscapeOnModalStack()
   if (r === "none") return
   ev.preventDefault()
@@ -77,7 +118,13 @@ function ensureEscListener() {
 }
 
 function removeEscListenerIfIdle() {
-  if (stack.length > 0 || !escListenerAttached) return
+  if (
+    stack.length > 0 ||
+    escBeforeModalCloseStack.length > 0 ||
+    !escListenerAttached
+  ) {
+    return
+  }
   document.removeEventListener("keydown", onDocumentKeydown, true)
   escListenerAttached = false
 }

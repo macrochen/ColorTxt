@@ -1,3 +1,15 @@
+import type {
+  CharacterBookStylePersisted,
+  CharacterGender,
+  CharacterRosterEntry,
+} from "@shared/characterTypes";
+
+export type {
+  CharacterBookStylePersisted,
+  CharacterGender,
+  CharacterRosterEntry,
+} from "@shared/characterTypes";
+
 export type FileBookmarkItem = {
   line: number;
   note?: string;
@@ -38,6 +50,10 @@ export type FileMetaRecord = {
    */
   lastOpenedAt?: number;
   updatedAt: number;
+  /** 本书侧栏「角色」推断画风（书籍级） */
+  characterBookStyle?: CharacterBookStylePersisted;
+  /** 本书侧栏「角色」卡片列表 */
+  characterRoster?: CharacterRosterEntry[];
 };
 
 type FileMetaPayload = {
@@ -120,6 +136,107 @@ function normalizeHighlightWordsByIndex(
   return Object.keys(out).length ? out : undefined;
 }
 
+const MAX_STYLE_PREFIX_ZH = 8000;
+const MAX_STYLE_NOTE_ZH = 4000;
+const MAX_ROSTER_ENTRIES = 200;
+const MAX_CHAR_FIELD = 32000;
+const MAX_DISPLAY_NAME = 200;
+const MAX_ID_LEN = 64;
+
+function clampStr(s: string, max: number): string {
+  const t = s.trim();
+  return t.length > max ? t.slice(0, max) : t;
+}
+
+function normalizeCharacterGender(raw: unknown): CharacterGender {
+  if (raw === "male" || raw === "female" || raw === "unknown") return raw;
+  return "unknown";
+}
+
+function normalizeCharacterBookStyle(
+  raw: unknown,
+): CharacterBookStylePersisted | undefined {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  const stylePrefixZh =
+    typeof o.stylePrefixZh === "string"
+      ? clampStr(o.stylePrefixZh, MAX_STYLE_PREFIX_ZH)
+      : "";
+  const styleNoteZh =
+    typeof o.styleNoteZh === "string"
+      ? clampStr(o.styleNoteZh, MAX_STYLE_NOTE_ZH)
+      : "";
+  const updatedAt =
+    typeof o.updatedAt === "number" && Number.isFinite(o.updatedAt)
+      ? Math.floor(o.updatedAt)
+      : undefined;
+  if (!stylePrefixZh && !styleNoteZh && updatedAt == null) return undefined;
+  const out: CharacterBookStylePersisted = {
+    stylePrefixZh: stylePrefixZh || "",
+  };
+  if (styleNoteZh) out.styleNoteZh = styleNoteZh;
+  if (updatedAt != null) out.updatedAt = updatedAt;
+  return out;
+}
+
+function normalizeCharacterRosterEntry(
+  raw: unknown,
+): CharacterRosterEntry | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const id =
+    typeof o.id === "string" ? clampStr(o.id, MAX_ID_LEN) : "";
+  const displayName =
+    typeof o.displayName === "string"
+      ? clampStr(o.displayName, MAX_DISPLAY_NAME)
+      : "";
+  if (!id || !displayName) return null;
+  return {
+    id,
+    displayName,
+    gender: normalizeCharacterGender(o.gender),
+    ageText:
+      typeof o.ageText === "string"
+        ? clampStr(o.ageText, 200)
+        : "",
+    identity:
+      typeof o.identity === "string"
+        ? clampStr(o.identity, 2000)
+        : "",
+    bio:
+      typeof o.bio === "string" ? clampStr(o.bio, MAX_CHAR_FIELD) : "",
+    relations:
+      typeof o.relations === "string"
+        ? clampStr(o.relations, MAX_CHAR_FIELD)
+        : "",
+    promptZh:
+      typeof o.promptZh === "string"
+        ? clampStr(o.promptZh, MAX_CHAR_FIELD)
+        : "",
+    negativeZh:
+      typeof o.negativeZh === "string"
+        ? clampStr(o.negativeZh, MAX_CHAR_FIELD)
+        : "",
+    retrieveThinkingText:
+      typeof o.retrieveThinkingText === "string"
+        ? clampStr(o.retrieveThinkingText, MAX_CHAR_FIELD)
+        : "",
+  };
+}
+
+function normalizeCharacterRoster(raw: unknown): CharacterRosterEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const byId = new Map<string, CharacterRosterEntry>();
+  for (const row of raw.slice(0, MAX_ROSTER_ENTRIES + 50)) {
+    const n = normalizeCharacterRosterEntry(row);
+    if (n) byId.set(n.id, n);
+  }
+  const list = [...byId.values()].slice(0, MAX_ROSTER_ENTRIES);
+  return list.length ? list : undefined;
+}
+
 function normalizeRecord(item: Partial<FileMetaRecord>): FileMetaRecord | null {
   if (typeof item.path !== "string" || !item.path.trim()) return null;
   const path = item.path.trim();
@@ -168,6 +285,8 @@ function normalizeRecord(item: Partial<FileMetaRecord>): FileMetaRecord | null {
     typeof item.updatedAt === "number" && Number.isFinite(item.updatedAt)
       ? Math.floor(item.updatedAt)
       : Date.now();
+  const characterBookStyle = normalizeCharacterBookStyle(item.characterBookStyle);
+  const characterRoster = normalizeCharacterRoster(item.characterRoster);
   return {
     path,
     fileName,
@@ -180,6 +299,8 @@ function normalizeRecord(item: Partial<FileMetaRecord>): FileMetaRecord | null {
     highlightWordsByIndex,
     lastOpenedAt,
     updatedAt,
+    ...(characterBookStyle ? { characterBookStyle } : {}),
+    ...(characterRoster?.length ? { characterRoster } : {}),
   };
 }
 
@@ -270,6 +391,8 @@ export function upsertFileMetaRecord(
     convertedTxtPath: prev?.convertedTxtPath,
     sourceMtimeMsAtConvert: prev?.sourceMtimeMsAtConvert,
     lastOpenedAt: prev?.lastOpenedAt,
+    characterBookStyle: prev?.characterBookStyle,
+    characterRoster: prev?.characterRoster,
     ...nextPartial,
     path,
     fileName: fileNameKey(path),

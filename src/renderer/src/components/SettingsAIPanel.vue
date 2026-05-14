@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { AIConfig } from "@shared/aiTypes";
 import AppCustomSelect, { type CustomSelectItem } from "./AppCustomSelect.vue";
+import AppPullFlashButton, { type AppPullFlashDone } from "./AppPullFlashButton.vue";
 import NumericInput from "./NumericInput.vue";
 import RangeSlider from "./RangeSlider.vue";
+import SwitchToggle from "./SwitchToggle.vue";
 import { icons } from "../icons";
 import { appAlert } from "../services/appDialog";
 
@@ -15,9 +17,7 @@ type AiTestPhase = "idle" | "pending" | "ok" | "fail";
 
 const showChatKey = ref(false);
 const chatModelsLoading = ref(false);
-type PullFlashPhase = "idle" | "loading" | "success" | "fail";
-const chatPullFlashPhase = ref<PullFlashPhase>("idle");
-let chatPullFlashTimer: ReturnType<typeof setTimeout> | null = null;
+const chatPullBtnRef = ref<InstanceType<typeof AppPullFlashButton> | null>(null);
 const chatTestPhase = ref<AiTestPhase>("idle");
 const chatModelOptions = ref<string[]>([]);
 
@@ -45,10 +45,9 @@ const chatModelScrollItems = computed((): CustomSelectItem[] =>
   })),
 );
 
-const chatModelDisplayLabel = computed(() => {
-  const m = modelValue.value.chat.model.trim();
-  return m || "选择模型…";
-});
+const chatModelDisplayLabel = computed(() =>
+  modelValue.value.chat.model.trim(),
+);
 
 const chatTestIconHtml = computed(() => {
   switch (chatTestPhase.value) {
@@ -63,25 +62,8 @@ const chatTestIconHtml = computed(() => {
   }
 });
 
-const chatPullIconHtml = computed(() => {
-  switch (chatPullFlashPhase.value) {
-    case "success":
-      return icons.success;
-    case "fail":
-      return icons.fail;
-    default:
-      return icons.refresh;
-  }
-});
-
-async function refreshChatModels(opts?: { buttonFlash?: boolean }) {
-  if (opts?.buttonFlash) {
-    if (chatPullFlashTimer != null) {
-      clearTimeout(chatPullFlashTimer);
-      chatPullFlashTimer = null;
-    }
-    chatPullFlashPhase.value = "loading";
-  }
+async function refreshChatModels(opts?: { pullDone?: AppPullFlashDone }) {
+  const pullDone = opts?.pullDone;
   chatModelsLoading.value = true;
   let ok = false;
   try {
@@ -98,24 +80,8 @@ async function refreshChatModels(opts?: { buttonFlash?: boolean }) {
     } else chatModelOptions.value = [];
   } finally {
     chatModelsLoading.value = false;
-    if (!opts?.buttonFlash && ok && chatPullFlashPhase.value === "fail") {
-      chatPullFlashPhase.value = "idle";
-    }
-    if (opts?.buttonFlash) {
-      if (ok) {
-        chatPullFlashPhase.value = "success";
-        chatPullFlashTimer = setTimeout(() => {
-          chatPullFlashPhase.value = "idle";
-          chatPullFlashTimer = null;
-        }, 1000);
-      } else {
-        if (chatPullFlashTimer != null) {
-          clearTimeout(chatPullFlashTimer);
-          chatPullFlashTimer = null;
-        }
-        chatPullFlashPhase.value = "fail";
-      }
-    }
+    if (pullDone) pullDone(ok);
+    else chatPullBtnRef.value?.clearStaleFailOnSilentSuccess(ok);
   }
 }
 
@@ -193,200 +159,195 @@ async function testChat() {
   }
 }
 
-onBeforeUnmount(() => {
-  if (chatPullFlashTimer != null) {
-    clearTimeout(chatPullFlashTimer);
-    chatPullFlashTimer = null;
-  }
-});
 </script>
 
 <template>
   <div class="settingsBody">
-    <section class="aiSection">
-      <h3 class="aiSectionTitle">对话模型</h3>
-      <div class="settingsRow">
-        <span class="settingsLabel small">接口地址</span>
-        <input
-          v-model="modelValue.chat.baseUrl"
-          type="text"
-          autocomplete="off"
-          placeholder="http://localhost:1234/v1"
-          class="settingsStretchInput"
+    <section class="aiSection aiSection--compact">
+      <div class="aiMasterToggleRow">
+        <span class="settingsLabel aiMasterToggleLabel"
+          >启用「AI 阅读助手」功能</span
+        >
+        <SwitchToggle
+          v-model="modelValue.aiEnabled"
+          aria-label="启用AI阅读助手功能"
         />
       </div>
-      <div class="settingsRow">
-        <span class="settingsLabel small">API 密钥</span>
-        <div class="settingsPasswordRow">
+      <p class="aiMasterHint">启用后，会在侧栏显示「AI 阅读助手」入口。</p>
+    </section>
+    <template v-if="modelValue.aiEnabled">
+      <section class="aiSection">
+        <h3 class="aiSectionTitle">对话模型</h3>
+        <div class="settingsRow">
+          <span class="settingsLabel">接口地址</span>
           <input
-            v-model="modelValue.chat.apiKey"
-            class="settingsStretchInput settingsPasswordRow__input"
-            :type="showChatKey ? 'text' : 'password'"
+            v-model="modelValue.chat.baseUrl"
+            type="text"
+            autocomplete="off"
+            placeholder="http://127.0.0.1:1234/v1"
+            class="settingsStretchInput"
+          />
+        </div>
+        <div class="settingsRow">
+          <span class="settingsLabel">API 密钥</span>
+          <div class="settingsPasswordRow">
+            <input
+              v-model="modelValue.chat.apiKey"
+              class="settingsStretchInput settingsPasswordRow__input"
+              :type="showChatKey ? 'text' : 'password'"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              class="btn iconOnly"
+              :title="showChatKey ? '隐藏' : '显示'"
+              @click="showChatKey = !showChatKey"
+            >
+              <span
+                class="iconSvg"
+                v-html="showChatKey ? icons.view : icons.viewOff"
+              />
+            </button>
+          </div>
+        </div>
+        <div class="settingsRow">
+          <span class="settingsLabel">模型</span>
+          <div class="aiModelToolbar">
+            <AppCustomSelect
+              class="aiModelSelect"
+              :model-value="modelValue.chat.model"
+              :display-label="chatModelDisplayLabel"
+              placeholder="选择模型…"
+              :fixed-top-items="selectListsEmpty"
+              :scroll-items="chatModelScrollItems"
+              :fixed-bottom-items="selectListsEmpty"
+              :scroll-max-height="260"
+              ariaLabel="对话模型"
+              @panel-open-change="onChatModelPanelOpenChange"
+              @update:model-value="modelValue.chat.model = $event"
+            />
+            <AppPullFlashButton
+              ref="chatPullBtnRef"
+              label="拉取模型"
+              :busy="chatModelsLoading"
+              @pull="(done) => void refreshChatModels({ pullDone: done })"
+            />
+            <button
+              type="button"
+              class="btn"
+              :class="{
+                success: chatTestPhase === 'ok',
+                danger: chatTestPhase === 'fail',
+              }"
+              :disabled="chatTestPhase === 'pending'"
+              @click="testChat"
+            >
+              <span
+                class="iconSvg"
+                :class="{ 'iconSvg--spinning': chatTestPhase === 'pending' }"
+                v-html="chatTestIconHtml"
+              />
+              测试连接
+            </button>
+          </div>
+        </div>
+        <div class="settingsRow">
+          <div class="settingsRowMain">
+            <span class="settingsLabel"
+              >温度（{{ modelValue.chat.temperature }}）</span
+            >
+            <RangeSlider
+              v-model="modelValue.chat.temperature"
+              :min="0"
+              :max="1"
+              :step="0.1"
+              :show-percent="false"
+              class="temperatureSlider"
+            />
+          </div>
+        </div>
+        <div class="settingsRow">
+          <div class="settingsRowMain settingsRowMain--baseline">
+            <span class="settingsLabel"
+              >最大 Token 数（{{ modelValue.chat.maxTokens }}）</span
+            >
+            <NumericInput
+              v-model="modelValue.chat.maxTokens"
+              :min="256"
+              :max="128000"
+              integer
+              class="numCompact"
+            />
+          </div>
+        </div>
+        <div class="settingsRow">
+          <div class="settingsRowMain settingsRowMain--baseline">
+            <span class="settingsLabel"
+              >上下文长度（{{ modelValue.chat.slidingWindowSize }} 轮）</span
+            >
+            <NumericInput
+              v-model="modelValue.chat.slidingWindowSize"
+              :min="1"
+              :max="64"
+              integer
+              class="numCompact"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section class="aiSection quickQSection">
+        <h3 class="aiSectionTitle">快速提问</h3>
+        <div
+          v-for="(_q, i) in modelValue.quickQuestions"
+          :key="i"
+          class="quickQRow"
+        >
+          <input
+            v-model="modelValue.quickQuestions[i]"
+            type="text"
+            class="settingsStretchInput quickQInput"
             autocomplete="off"
             spellcheck="false"
+            placeholder="提问内容…"
           />
-          <button
-            type="button"
-            class="btn iconOnly"
-            :title="showChatKey ? '隐藏' : '显示'"
-            @click="showChatKey = !showChatKey"
-          >
-            <span
-              class="iconSvg"
-              v-html="showChatKey ? icons.view : icons.viewOff"
-            />
-          </button>
+          <div class="quickQRowActions">
+            <button
+              type="button"
+              class="btn iconOnly quickQReorder"
+              title="上移"
+              :disabled="!canMoveQuickQuestionUp(i)"
+              @click="moveQuickQuestionUp(i)"
+            >
+              <span class="iconSvg" v-html="icons.up" />
+            </button>
+            <button
+              type="button"
+              class="btn iconOnly quickQReorder"
+              title="下移"
+              :disabled="!canMoveQuickQuestionDown(i)"
+              @click="moveQuickQuestionDown(i)"
+            >
+              <span class="iconSvg" v-html="icons.down" />
+            </button>
+            <button
+              type="button"
+              class="btn iconOnly quickQRemove"
+              title="删除"
+              :disabled="modelValue.quickQuestions.length <= 1"
+              @click="removeQuickQuestion(i)"
+            >
+              <span class="iconSvg" v-html="icons.remove" />
+            </button>
+          </div>
         </div>
-      </div>
-      <div class="settingsRow">
-        <span class="settingsLabel small">模型</span>
-        <div class="aiModelToolbar">
-          <AppCustomSelect
-            class="aiModelSelect"
-            :model-value="modelValue.chat.model"
-            :display-label="chatModelDisplayLabel"
-            :fixed-top-items="selectListsEmpty"
-            :scroll-items="chatModelScrollItems"
-            :fixed-bottom-items="selectListsEmpty"
-            :scroll-max-height="260"
-            ariaLabel="对话模型"
-            @panel-open-change="onChatModelPanelOpenChange"
-            @update:model-value="modelValue.chat.model = $event"
-          />
-          <button
-            type="button"
-            class="btn"
-            :class="{
-              success: chatPullFlashPhase === 'success',
-              danger: chatPullFlashPhase === 'fail',
-            }"
-            :disabled="chatModelsLoading"
-            @click="refreshChatModels({ buttonFlash: true })"
-          >
-            <span
-              class="iconSvg"
-              :class="{
-                'iconSvg--spinning':
-                  chatModelsLoading || chatPullFlashPhase === 'loading',
-              }"
-              v-html="chatPullIconHtml"
-            />
-            拉取模型
-          </button>
-          <button
-            type="button"
-            class="btn"
-            :class="{
-              success: chatTestPhase === 'ok',
-              danger: chatTestPhase === 'fail',
-            }"
-            :disabled="chatTestPhase === 'pending'"
-            @click="testChat"
-          >
-            <span
-              class="iconSvg"
-              :class="{ 'iconSvg--spinning': chatTestPhase === 'pending' }"
-              v-html="chatTestIconHtml"
-            />
-            测试连接
-          </button>
-        </div>
-      </div>
-      <div class="settingsRow">
-        <div class="settingsRowMain">
-          <span class="settingsLabel"
-            >温度（{{ modelValue.chat.temperature }}）</span
-          >
-          <RangeSlider
-            v-model="modelValue.chat.temperature"
-            :min="0"
-            :max="1"
-            :step="0.1"
-            :show-percent="false"
-            class="temperatureSlider"
-          />
-        </div>
-      </div>
-      <div class="settingsRow">
-        <div class="settingsRowMain settingsRowMain--baseline">
-          <span class="settingsLabel"
-            >最大 Token 数（{{ modelValue.chat.maxTokens }}）</span
-          >
-          <NumericInput
-            v-model="modelValue.chat.maxTokens"
-            :min="256"
-            :max="128000"
-            integer
-            class="numCompact"
-          />
-        </div>
-      </div>
-      <div class="settingsRow">
-        <div class="settingsRowMain settingsRowMain--baseline">
-          <span class="settingsLabel"
-            >上下文长度（{{ modelValue.chat.slidingWindowSize }} 轮）</span
-          >
-          <NumericInput
-            v-model="modelValue.chat.slidingWindowSize"
-            :min="1"
-            :max="64"
-            integer
-            class="numCompact"
-          />
-        </div>
-      </div>
-    </section>
-
-    <section class="aiSection quickQSection">
-      <h3 class="aiSectionTitle">快速提问</h3>
-      <div
-        v-for="(_q, i) in modelValue.quickQuestions"
-        :key="i"
-        class="quickQRow"
-      >
-        <input
-          v-model="modelValue.quickQuestions[i]"
-          type="text"
-          class="settingsStretchInput quickQInput"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="提问内容…"
-        />
-        <div class="quickQRowActions">
-          <button
-            type="button"
-            class="btn iconOnly quickQReorder"
-            title="上移"
-            :disabled="!canMoveQuickQuestionUp(i)"
-            @click="moveQuickQuestionUp(i)"
-          >
-            <span class="iconSvg" v-html="icons.up" />
-          </button>
-          <button
-            type="button"
-            class="btn iconOnly quickQReorder"
-            title="下移"
-            :disabled="!canMoveQuickQuestionDown(i)"
-            @click="moveQuickQuestionDown(i)"
-          >
-            <span class="iconSvg" v-html="icons.down" />
-          </button>
-          <button
-            type="button"
-            class="btn iconOnly quickQRemove"
-            title="删除"
-            :disabled="modelValue.quickQuestions.length <= 1"
-            @click="removeQuickQuestion(i)"
-          >
-            <span class="iconSvg" v-html="icons.remove" />
-          </button>
-        </div>
-      </div>
-      <button type="button" class="btn quickQAdd" @click="addQuickQuestion">
-        <span class="iconSvg" v-html="icons.add" />
-        添加一项
-      </button>
-    </section>
+        <button type="button" class="btn quickQAdd" @click="addQuickQuestion">
+          <span class="iconSvg" v-html="icons.add" />
+          添加一项
+        </button>
+      </section>
+    </template>
   </div>
 </template>
 
@@ -404,6 +365,31 @@ onBeforeUnmount(() => {
   padding: 16px;
   background-color: var(--bg);
   border-radius: 8px;
+}
+
+.aiSection--compact {
+  gap: 12px;
+}
+
+.aiMasterToggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.aiMasterToggleLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.aiMasterHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .aiSectionTitle {
@@ -438,11 +424,6 @@ onBeforeUnmount(() => {
   flex: 1 1 60%;
 }
 
-.settingsLabel.small {
-  font-size: 12px;
-  color: var(--muted);
-}
-
 .quickQSection {
   gap: 5px;
 }
@@ -455,7 +436,6 @@ onBeforeUnmount(() => {
   width: 100%;
   box-sizing: border-box;
   min-width: 0;
-  resize: none;
 }
 
 .settingsPasswordRow {
@@ -503,17 +483,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.aiModelToolbar .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.aiModelToolbar .btn.success .iconSvg :deep(path),
-.aiModelToolbar .btn.danger .iconSvg :deep(path) {
-  fill: currentColor;
-}
-
 .aiModelSelect {
   flex: 1 1 160px;
   min-width: 0;
@@ -549,11 +518,6 @@ onBeforeUnmount(() => {
 .quickQReorder,
 .quickQRemove {
   flex-shrink: 0;
-}
-
-.quickQRowActions .btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
 }
 
 .quickQRemove:hover:not(:disabled) {

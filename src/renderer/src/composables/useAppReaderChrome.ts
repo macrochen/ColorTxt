@@ -49,8 +49,8 @@ function nodeIsUnderFullscreenPanel(panel: HTMLElement, start: Node | null) {
  */
 export function useAppReaderChrome(deps: {
   readerRef: ReaderRef;
-  /** 全屏侧栏文件列表：Teleport 弹层是否打开；为真时 `mouseleave` 不收起侧栏，关闭后再按指针位置判断 */
-  fullscreenFileListPopoversOpen: Ref<boolean>;
+  /** 全屏侧栏：Teleport 浮层打开（文件列表下拉、AI 助手历史/导出/模型菜单、header「更多」等）；为真时移出侧栏不立刻收起 */
+  fullscreenSidebarPopoversSuppressCollapse: Ref<boolean>;
   /** 全屏下临时禁用侧栏左缘感应唤起（如设置/配色弹框打开期间） */
   suppressFullscreenSidebarHover?: Ref<boolean>;
 }) {
@@ -278,7 +278,7 @@ export function useAppReaderChrome(deps: {
   ) {
     if (!isFullscreenView.value || !showFullscreenSidebar.value) return;
     if (resizingSidebar.value) return;
-    if (deps.fullscreenFileListPopoversOpen.value) return;
+    if (deps.fullscreenSidebarPopoversSuppressCollapse.value) return;
     const top = document.elementFromPoint(clientX, clientY);
     if (top && nodeIsUnderFullscreenSidebarFloat(top)) return;
     const sidebar = fullscreenSidebarOverlayRef.value;
@@ -289,24 +289,24 @@ export function useAppReaderChrome(deps: {
   function onFullscreenSidebarMouseLeave(ev: MouseEvent) {
     if (!isFullscreenView.value) return;
     if (resizingSidebar.value) return;
-    if (deps.fullscreenFileListPopoversOpen.value) return;
+    if (deps.fullscreenSidebarPopoversSuppressCollapse.value) return;
     const rt = ev.relatedTarget;
     if (rt instanceof Node && nodeIsUnderFullscreenSidebarFloat(rt)) return;
     const { clientX, clientY } = ev;
     requestAnimationFrame(() => {
       if (!isFullscreenView.value || !showFullscreenSidebar.value) return;
-      if (deps.fullscreenFileListPopoversOpen.value) return;
+      if (deps.fullscreenSidebarPopoversSuppressCollapse.value) return;
       tryCollapseFullscreenSidebarFromPointer(clientX, clientY);
     });
   }
 
   watch(
-    () => deps.fullscreenFileListPopoversOpen.value,
+    () => deps.fullscreenSidebarPopoversSuppressCollapse.value,
     (open, wasOpen) => {
       if (wasOpen !== true || open !== false) return;
       if (!isFullscreenView.value || !showFullscreenSidebar.value) return;
       requestAnimationFrame(() => {
-        if (deps.fullscreenFileListPopoversOpen.value) return;
+        if (deps.fullscreenSidebarPopoversSuppressCollapse.value) return;
         tryCollapseFullscreenSidebarFromPointer(
           lastFullscreenPointerClientX.value,
           lastFullscreenPointerClientY.value,

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { AIConfig } from "@shared/aiTypes";
 import AppCustomSelect, { type CustomSelectItem } from "./AppCustomSelect.vue";
+import AppPullFlashButton, { type AppPullFlashDone } from "./AppPullFlashButton.vue";
 import NumericInput from "./NumericInput.vue";
 import SwitchToggle from "./SwitchToggle.vue";
 import { icons } from "../icons";
@@ -15,9 +16,7 @@ type AiTestPhase = "idle" | "pending" | "ok" | "fail";
 
 const showEmbedKey = ref(false);
 const embedModelsLoading = ref(false);
-type PullFlashPhase = "idle" | "loading" | "success" | "fail";
-const embedPullFlashPhase = ref<PullFlashPhase>("idle");
-let embedPullFlashTimer: ReturnType<typeof setTimeout> | null = null;
+const embedPullBtnRef = ref<InstanceType<typeof AppPullFlashButton> | null>(null);
 const embedTestPhase = ref<AiTestPhase>("idle");
 const embedModelOptions = ref<string[]>([]);
 type EmbedProbeFlashPhase = "idle" | "loading" | "success" | "fail";
@@ -48,10 +47,9 @@ const embedModelScrollItems = computed((): CustomSelectItem[] =>
   })),
 );
 
-const embedModelDisplayLabel = computed(() => {
-  const m = modelValue.value.embedding.model.trim();
-  return m || "选择嵌入模型…";
-});
+const embedModelDisplayLabel = computed(() =>
+  modelValue.value.embedding.model.trim(),
+);
 
 const embedTestIconHtml = computed(() => {
   switch (embedTestPhase.value) {
@@ -66,17 +64,6 @@ const embedTestIconHtml = computed(() => {
   }
 });
 
-const embedPullIconHtml = computed(() => {
-  switch (embedPullFlashPhase.value) {
-    case "success":
-      return icons.success;
-    case "fail":
-      return icons.fail;
-    default:
-      return icons.refresh;
-  }
-});
-
 const embedProbeIconHtml = computed(() => {
   switch (embedProbeFlashPhase.value) {
     case "success":
@@ -88,14 +75,8 @@ const embedProbeIconHtml = computed(() => {
   }
 });
 
-async function refreshEmbedModels(opts?: { buttonFlash?: boolean }) {
-  if (opts?.buttonFlash) {
-    if (embedPullFlashTimer != null) {
-      clearTimeout(embedPullFlashTimer);
-      embedPullFlashTimer = null;
-    }
-    embedPullFlashPhase.value = "loading";
-  }
+async function refreshEmbedModels(opts?: { pullDone?: AppPullFlashDone }) {
+  const pullDone = opts?.pullDone;
   embedModelsLoading.value = true;
   let ok = false;
   try {
@@ -112,24 +93,8 @@ async function refreshEmbedModels(opts?: { buttonFlash?: boolean }) {
     } else embedModelOptions.value = [];
   } finally {
     embedModelsLoading.value = false;
-    if (!opts?.buttonFlash && ok && embedPullFlashPhase.value === "fail") {
-      embedPullFlashPhase.value = "idle";
-    }
-    if (opts?.buttonFlash) {
-      if (ok) {
-        embedPullFlashPhase.value = "success";
-        embedPullFlashTimer = setTimeout(() => {
-          embedPullFlashPhase.value = "idle";
-          embedPullFlashTimer = null;
-        }, 1000);
-      } else {
-        if (embedPullFlashTimer != null) {
-          clearTimeout(embedPullFlashTimer);
-          embedPullFlashTimer = null;
-        }
-        embedPullFlashPhase.value = "fail";
-      }
-    }
+    if (pullDone) pullDone(ok);
+    else embedPullBtnRef.value?.clearStaleFailOnSilentSuccess(ok);
   }
 }
 
@@ -197,10 +162,6 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  if (embedPullFlashTimer != null) {
-    clearTimeout(embedPullFlashTimer);
-    embedPullFlashTimer = null;
-  }
   if (embedProbeFlashTimer != null) {
     clearTimeout(embedProbeFlashTimer);
     embedProbeFlashTimer = null;
@@ -246,40 +207,40 @@ async function testEmbedding() {
 
 <template>
   <div class="settingsBody">
-    <section class="aiSection">
-      <div class="vectorSectionHead">
-        <div class="vectorSectionHeadMain">
-          <h3 class="aiSectionTitle">嵌入模型（RAG）</h3>
-          <p class="settingsHint vectorSectionIntro">
-            向量模型，用于语义搜索和 RAG 检索；修改「向量维度」将清空已建索引。
-          </p>
-        </div>
+    <section class="aiSection aiSection--compact">
+      <div class="aiMasterToggleRow">
+        <span class="settingsLabel aiMasterToggleLabel">启用向量模型</span>
         <SwitchToggle
-          size="sm"
-          :model-value="modelValue.embeddingEnabled"
+          v-model="modelValue.embeddingEnabled"
           aria-label="启用向量模型"
-          @update:model-value="modelValue.embeddingEnabled = $event"
         />
       </div>
-      <template v-if="modelValue.embeddingEnabled">
+      <p class="aiMasterHint">
+        启用后，可建立书籍语义索引，供「AI 阅读助手」与「角色卡」检索与引用。
+      </p>
+    </section>
+    <template v-if="modelValue.embeddingEnabled">
+      <section class="aiSection">
+        <h3 class="aiSectionTitle">嵌入模型（RAG）</h3>
         <div class="settingsRow">
-          <span class="settingsLabel small">接口地址</span>
+          <span class="settingsLabel">接口地址</span>
           <input
             v-model="modelValue.embedding.baseUrl"
             type="text"
             autocomplete="off"
-            placeholder="http://localhost:1234/v1"
+            placeholder="http://127.0.0.1:1234/v1"
             class="settingsStretchInput"
           />
         </div>
         <div class="settingsRow">
-          <span class="settingsLabel small">API 密钥</span>
+          <span class="settingsLabel">API 密钥</span>
           <div class="settingsPasswordRow">
             <input
               v-model="modelValue.embedding.apiKey"
               class="settingsStretchInput settingsPasswordRow__input"
               :type="showEmbedKey ? 'text' : 'password'"
               autocomplete="off"
+              spellcheck="false"
             />
             <button
               type="button"
@@ -295,12 +256,13 @@ async function testEmbedding() {
           </div>
         </div>
         <div class="settingsRow">
-          <span class="settingsLabel small">模型</span>
+          <span class="settingsLabel">模型</span>
           <div class="aiModelToolbar">
             <AppCustomSelect
               class="aiModelSelect"
               :model-value="modelValue.embedding.model"
               :display-label="embedModelDisplayLabel"
+              placeholder="选择嵌入模型…"
               :fixed-top-items="selectListsEmpty"
               :scroll-items="embedModelScrollItems"
               :fixed-bottom-items="selectListsEmpty"
@@ -309,26 +271,12 @@ async function testEmbedding() {
               @panel-open-change="onEmbedModelPanelOpenChange"
               @update:model-value="modelValue.embedding.model = $event"
             />
-            <button
-              type="button"
-              class="btn"
-              :class="{
-                success: embedPullFlashPhase === 'success',
-                danger: embedPullFlashPhase === 'fail',
-              }"
-              :disabled="embedModelsLoading"
-              @click="refreshEmbedModels({ buttonFlash: true })"
-            >
-              <span
-                class="iconSvg"
-                :class="{
-                  'iconSvg--spinning':
-                    embedModelsLoading || embedPullFlashPhase === 'loading',
-                }"
-                v-html="embedPullIconHtml"
-              />
-              拉取模型
-            </button>
+            <AppPullFlashButton
+              ref="embedPullBtnRef"
+              label="拉取模型"
+              :busy="embedModelsLoading"
+              @pull="(done) => void refreshEmbedModels({ pullDone: done })"
+            />
             <button
               type="button"
               class="btn"
@@ -347,6 +295,10 @@ async function testEmbedding() {
               测试连接
             </button>
           </div>
+          <p class="aiMasterHint">
+            建议使用 <code>BGE Small ZH v1.5</code
+            ><code>Multilingual E5 Small</code> 等支持 <b>中文</b> 的嵌入模型。
+          </p>
         </div>
         <div class="settingsRow">
           <div class="settingsRowMain settingsRowMain--baseline">
@@ -384,10 +336,12 @@ async function testEmbedding() {
             </div>
           </div>
           <p class="settingsHint">
-            多数 OpenAI
-            兼容接口会返回完整向量，可通过「自动检测」填入维度；若服务端支持可变维度（如部分
-            OpenAI 模型），以实际返回为准。
+            多数 OpenAI 兼容接口会返回完整向量，可通过「自动检测」填入维度。
           </p>
+          <p class="settingsHint">
+            若服务端支持可变维度（如部分 OpenAI 模型），以实际返回为准。
+          </p>
+          <p class="aiMasterHint">修改「向量维度」将清空已建索引。</p>
         </div>
         <div class="settingsRow">
           <div class="settingsRowMain settingsRowMain--baseline">
@@ -405,8 +359,8 @@ async function testEmbedding() {
             />
           </div>
         </div>
-      </template>
-    </section>
+      </section>
+    </template>
   </div>
 </template>
 
@@ -426,20 +380,36 @@ async function testEmbedding() {
   border-radius: 8px;
 }
 
-.vectorSectionHead {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+.aiSection--compact {
   gap: 12px;
 }
 
-.vectorSectionHeadMain {
+.aiMasterToggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   min-width: 0;
-  flex: 1;
 }
 
-.settingsHint.vectorSectionIntro {
-  margin-top: 6px;
+.aiMasterToggleLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.aiMasterHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.aiMasterHint code {
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--panel-elevated, rgba(127, 127, 127, 0.12));
 }
 
 .aiSectionTitle {
@@ -470,11 +440,8 @@ async function testEmbedding() {
 .settingsLabel {
   font-size: 14px;
   color: var(--fg);
-}
-
-.settingsLabel.small {
-  font-size: 12px;
-  color: var(--muted);
+  white-space: nowrap;
+  flex: 1 1 60%;
 }
 
 .settingsHint {
@@ -535,17 +502,6 @@ async function testEmbedding() {
   min-width: 0;
 }
 
-.aiModelToolbar .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.aiModelToolbar .btn.success .iconSvg :deep(path),
-.aiModelToolbar .btn.danger .iconSvg :deep(path) {
-  fill: currentColor;
-}
-
 .aiModelSelect {
   flex: 1 1 160px;
   min-width: 0;
@@ -560,16 +516,5 @@ async function testEmbedding() {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-.embedDimRow .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.embedDimRow .btn.success .iconSvg :deep(path),
-.embedDimRow .btn.danger .iconSvg :deep(path) {
-  fill: currentColor;
 }
 </style>

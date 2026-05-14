@@ -352,10 +352,13 @@ export function listThreads(bookHash: string) {
   const database = getAiVectorDb();
   return database
     .prepare(
-      `SELECT id, book_hash AS bookHash, title,
-              created_at AS createdAt, updated_at AS updatedAt,
-              title_locked AS titleLocked
-       FROM threads WHERE book_hash = ? ORDER BY updated_at DESC`,
+      `SELECT t.id, t.book_hash AS bookHash, t.title,
+              t.created_at AS createdAt, t.updated_at AS updatedAt,
+              t.title_locked AS titleLocked
+       FROM threads t
+       WHERE t.book_hash = ?
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id)
+       ORDER BY t.updated_at DESC`,
     )
     .all(bookHash) as Array<{
       id: string;
@@ -410,6 +413,35 @@ export function touchThread(threadId: string): void {
 export function deleteThread(threadId: string): void {
   const database = getAiVectorDb();
   database.prepare(`DELETE FROM threads WHERE id = ?`).run(threadId);
+}
+
+/**
+ * 删除该书下无任何消息的会话。
+ * @param exceptThreadId 保留该 id（例如当前「新对话」草稿）；不传则删除该书全部空会话。
+ */
+export function deleteEmptyThreadsForBook(
+  bookHash: string,
+  exceptThreadId?: string | null,
+): void {
+  const database = getAiVectorDb();
+  if (exceptThreadId) {
+    database
+      .prepare(
+        `DELETE FROM threads
+         WHERE book_hash = ?
+           AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = threads.id)
+           AND id != ?`,
+      )
+      .run(bookHash, exceptThreadId);
+  } else {
+    database
+      .prepare(
+        `DELETE FROM threads
+         WHERE book_hash = ?
+           AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = threads.id)`,
+      )
+      .run(bookHash);
+  }
 }
 
 export function listMessages(threadId: string) {

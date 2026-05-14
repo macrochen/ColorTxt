@@ -140,7 +140,7 @@ function onSkillModalSave(payload: {
 
 async function deleteCustomSkill(skill: AiCustomSkill) {
   const ok = await appConfirm(
-    `确定删除技能「${skill.title}」吗？此操作不可撤销。`,
+    `确定删除技能「${skill.title}」吗？此操作不可逆！`,
     "删除技能",
   );
   if (!ok) return;
@@ -164,7 +164,7 @@ defineExpose({
     <header class="skillsHeader">
       <p class="skillsTips">
         管理提示词技能（启用的技能会在「AI
-        阅读助手」中注册为工具，由模型按需调用）
+        阅读助手」和「角色卡」中注册为工具，由模型按需调用）
       </p>
     </header>
 
@@ -325,7 +325,7 @@ defineExpose({
 .skillCardTitle {
   margin: 0;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--fg);
   line-height: 1.3;
   min-width: 0;

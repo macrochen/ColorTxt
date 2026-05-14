@@ -52,6 +52,7 @@ defineEmits<{ click: [e: MouseEvent] }>();
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: background 0.16s ease;
 }
 
 .iconBtn:hover:not(:disabled) {

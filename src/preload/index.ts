@@ -1,6 +1,8 @@
-import { app, contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { FileFilter } from "electron";
 import { EBOOK_CONVERT_DEFAULT_SUBDIR } from "@shared/ebookConvertPaths";
+import { CHARACTER_PORTRAIT_DEFAULT_SUBDIR } from "@shared/characterPortraitPaths";
+import { APP_DISPLAY_NAME } from "@shared/packageDerived";
 import type {
   AIAgentRendererEvent,
   AIAgentStartPayload,
@@ -8,13 +10,39 @@ import type {
   AIChatStreamPayload,
   AIConfig,
   AIIndexSearchHit,
+  BookStyleInferResult,
+  PortraitExtractResult,
 } from "@shared/aiTypes";
+import type {
+  ColorTxtShowMessageBoxOptions,
+  ColorTxtShowMessageBoxResult,
+} from "@shared/colorTxtShowMessageBox";
+import type {
+  ColorTxtOpenDialogOptions,
+  ColorTxtOpenDialogResult,
+  ColorTxtSaveDialogOptions,
+  ColorTxtSaveDialogResult,
+} from "@shared/colorTxtOpenSaveDialog";
+import type {
+  AiTxt2ImgInvokeDraft,
+  AiTxt2ImgInvokeResult,
+} from "@shared/aiTxt2ImgIpc";
 
 /** sandbox 下 preload 不可 require('path')，与 renderer 的 joinFs 行为对齐 */
 function joinUserDataSubdir(userData: string, segment: string): string {
   const base = userData.replace(/[/\\]+$/, "");
   const sep = base.includes("\\") ? "\\" : "/";
   return `${base}${sep}${segment.replace(/^[/\\]+|[/\\]+$/g, "")}`;
+}
+
+/** `app.getPath` 仅在主进程可用；preload 通过同步 IPC 向主进程取路径 */
+function getPathFromMainSync(name: "userData"): string {
+  try {
+    const r = ipcRenderer.sendSync("app:getPathSync", name);
+    return typeof r === "string" ? r.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 /** 磁盘上被读取的文件路径（通常为 .txt） */
@@ -61,7 +89,8 @@ const openTxtFromShellQueue: string[] = [];
 const openTxtFromShellCbs = new Set<(filePath: string) => void>();
 
 function flushOpenTxtFromShellQueue() {
-  if (openTxtFromShellCbs.size === 0 || openTxtFromShellQueue.length === 0) return;
+  if (openTxtFromShellCbs.size === 0 || openTxtFromShellQueue.length === 0)
+    return;
   const batch = openTxtFromShellQueue.splice(0, openTxtFromShellQueue.length);
   for (const filePath of batch) {
     for (const cb of openTxtFromShellCbs) cb(filePath);
@@ -74,39 +103,46 @@ ipcRenderer.on("app:open-txt-path", (_e, filePath: string) => {
 });
 
 const api = {
-  openTxtDialog: () =>
-    ipcRenderer.invoke("dialog:openTxt") as Promise<string | null>,
-  openFilePlainDialog: () =>
-    ipcRenderer.invoke("dialog:openFilePlain") as Promise<string | null>,
-  openDirectoryPlainDialog: () =>
-    ipcRenderer.invoke("dialog:openDirectoryPlain") as Promise<string | null>,
-  openTxtDirectoryDialog: () =>
-    ipcRenderer.invoke("dialog:openTxtDirectory") as Promise<{
-      dirPaths: string[];
-      files: Array<{ name: string; path: string; size: number }>;
-    } | null>,
-  confirmClearRecentFiles: () =>
-    ipcRenderer.invoke("dialog:confirmClearRecentFiles") as Promise<boolean>,
-  confirmClearFileList: () =>
-    ipcRenderer.invoke("dialog:confirmClearFileList") as Promise<boolean>,
-  confirmClearFileListCategory: (payload: {
-    categoryLabel: string;
-    count: number;
-  }) =>
+  showOpenDialog: (options: ColorTxtOpenDialogOptions) =>
     ipcRenderer.invoke(
-      "dialog:confirmClearFileListCategory",
-      payload,
-    ) as Promise<boolean>,
-  confirmClearBookmarks: () =>
-    ipcRenderer.invoke("dialog:confirmClearBookmarks") as Promise<boolean>,
-  confirmClearHighlightTerms: () =>
+      "dialog:showOpenDialog",
+      options,
+    ) as Promise<ColorTxtOpenDialogResult>,
+  showSaveDialog: (options: ColorTxtSaveDialogOptions) =>
     ipcRenderer.invoke(
-      "dialog:confirmClearHighlightTerms",
-    ) as Promise<boolean>,
-  confirmClearAppCache: () =>
-    ipcRenderer.invoke("dialog:confirmClearAppCache") as Promise<boolean>,
-  confirmResetUiSettings: () =>
-    ipcRenderer.invoke("dialog:confirmResetUiSettings") as Promise<boolean>,
+      "dialog:showSaveDialog",
+      options,
+    ) as Promise<ColorTxtSaveDialogResult>,
+  showMessageBox: (options: ColorTxtShowMessageBoxOptions) =>
+    ipcRenderer.invoke(
+      "dialog:showMessageBox",
+      options,
+    ) as Promise<ColorTxtShowMessageBoxResult>,
+  /** 原生消息框，单钮「确定」，语义类似 `window.alert` */
+  alert: (message: string) =>
+    ipcRenderer
+      .invoke("dialog:showMessageBox", {
+        type: "info",
+        title: APP_DISPLAY_NAME,
+        message,
+        buttons: ["确定"],
+        defaultId: 0,
+        noLink: true,
+      } satisfies ColorTxtShowMessageBoxOptions)
+      .then(() => {}),
+  /** 原生消息框「取消 / 确定」，语义类似 `window.confirm`（确定为 `true`） */
+  confirm: (message: string) =>
+    ipcRenderer
+      .invoke("dialog:showMessageBox", {
+        type: "question",
+        title: APP_DISPLAY_NAME,
+        message,
+        buttons: ["取消", "确定"],
+        defaultId: 1,
+        cancelId: 0,
+        noLink: true,
+      } satisfies ColorTxtShowMessageBoxOptions)
+      .then((r) => (r as ColorTxtShowMessageBoxResult).response === 1),
   listTxtFilesInDirectory: (dirPath: string) =>
     ipcRenderer.invoke("dir:listTxtFiles", dirPath) as Promise<{
       dirPath: string;
@@ -126,20 +162,18 @@ const api = {
     }>,
   getPath: (name: string) =>
     ipcRenderer.invoke("app:getPath", name) as Promise<string | null>,
-  getUserDataPath: () => {
-    try {
-      return app.getPath("userData");
-    } catch {
-      return "";
-    }
-  },
+  getUserDataPath: () => getPathFromMainSync("userData"),
   /** 默认电子书转 txt 输出目录：`userData/ConvertedTxt` */
   getDefaultEbookConvertOutputDir: () => {
-    try {
-      return joinUserDataSubdir(app.getPath("userData"), EBOOK_CONVERT_DEFAULT_SUBDIR);
-    } catch {
-      return "";
-    }
+    const ud = getPathFromMainSync("userData");
+    if (!ud) return "";
+    return joinUserDataSubdir(ud, EBOOK_CONVERT_DEFAULT_SUBDIR);
+  },
+  /** 默认角色立绘缓存根：`userData/CharacterPortrait` */
+  getDefaultCharacterPortraitCacheDir: () => {
+    const ud = getPathFromMainSync("userData");
+    if (!ud) return "";
+    return joinUserDataSubdir(ud, CHARACTER_PORTRAIT_DEFAULT_SUBDIR);
   },
   pathToFileUrl: (filePath: string) =>
     ipcRenderer.invoke("path:toFileUrl", filePath) as Promise<string | null>,
@@ -147,10 +181,9 @@ const api = {
    * 用于 `<img src>` / 灯箱：短 URL `colortxt-local://resource/{uuid}`，避免整段路径过长导致不发起请求。
    */
   pathToReadableLocalUrl: (filePath: string) =>
-    ipcRenderer.invoke(
-      "colortxtLocal:registerPath",
-      filePath,
-    ) as Promise<string | null>,
+    ipcRenderer.invoke("colortxtLocal:registerPath", filePath) as Promise<
+      string | null
+    >,
   readFileAsArrayBuffer: async (filePath: string) => {
     const data = (await ipcRenderer.invoke(
       "file:readFileAsBuffer",
@@ -181,10 +214,18 @@ const api = {
       | { ok: true; path: string; size: number }
       | { ok: false; message: string; code?: string }
     >,
-  streamFile: (
-    filePath: string,
-    options?: { sessionFilePath?: string },
-  ) =>
+  characterPortrait: {
+    migrateCacheRoot: (payload: { from: string; to: string }) =>
+      ipcRenderer.invoke(
+        "characterPortrait:migrateCacheRoot",
+        payload,
+      ) as Promise<{ ok: true } | { ok: false; error: string }>,
+    copyFileTo: (payload: { from: string; to: string }) =>
+      ipcRenderer.invoke("characterPortrait:copyFileTo", payload) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+  },
+  streamFile: (filePath: string, options?: { sessionFilePath?: string }) =>
     ipcRenderer.send("file:stream", {
       physicalPath: filePath,
       sessionFilePath: options?.sessionFilePath,
@@ -207,9 +248,9 @@ const api = {
     ipcRenderer.invoke("window:shouldRestoreSession") as Promise<boolean>,
   /** 安装包关联 / 命令行启动时由主进程写入，仅可取一次 */
   consumePendingOpenTxtPath: () =>
-    ipcRenderer.invoke(
-      "window:consumePendingOpenTxtPath",
-    ) as Promise<string | null>,
+    ipcRenderer.invoke("window:consumePendingOpenTxtPath") as Promise<
+      string | null
+    >,
   onOpenTxtFromShell: (cb: (filePath: string) => void) => {
     openTxtFromShellCbs.add(cb);
     flushOpenTxtFromShellQueue();
@@ -225,6 +266,10 @@ const api = {
     ipcRenderer.invoke("shell:openExternal", url) as Promise<void>,
   showItemInFolder: (filePath: string) =>
     ipcRenderer.invoke("shell:showItemInFolder", filePath) as Promise<void>,
+  openPath: (dirPath: string) =>
+    ipcRenderer.invoke("shell:openPath", dirPath) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
   openNewWindow: () => {
     ipcRenderer.send("window:new");
   },
@@ -236,7 +281,10 @@ const api = {
   getGlobalShortcut: () =>
     ipcRenderer.invoke("shortcut:getGlobalToggle") as Promise<string>,
   validateGlobalShortcut: (accelerator: string) =>
-    ipcRenderer.invoke("shortcut:validateGlobalToggle", accelerator) as Promise<{
+    ipcRenderer.invoke(
+      "shortcut:validateGlobalToggle",
+      accelerator,
+    ) as Promise<{
       ok: boolean;
       message?: string;
     }>,
@@ -282,21 +330,16 @@ const api = {
     ipcRenderer.on("theme:sync", fn);
     return () => ipcRenderer.off("theme:sync", fn);
   },
-  isPackaged: () =>
-    ipcRenderer.invoke("app:isPackaged") as Promise<boolean>,
+  isPackaged: () => ipcRenderer.invoke("app:isPackaged") as Promise<boolean>,
   isWindowsPortable: () =>
     ipcRenderer.invoke("app:isWindowsPortable") as Promise<boolean>,
   checkForUpdates: () =>
     ipcRenderer.invoke("updater:check") as Promise<
-      | { skipped: true }
-      | { ok: true }
-      | { ok: false; message: string }
+      { skipped: true } | { ok: true } | { ok: false; message: string }
     >,
   downloadUpdate: () =>
     ipcRenderer.invoke("updater:download") as Promise<
-      | { skipped: true }
-      | { ok: true }
-      | { ok: false; message: string }
+      { skipped: true } | { ok: true } | { ok: false; message: string }
     >,
   quitAndInstall: () =>
     ipcRenderer.invoke("updater:quitAndInstall") as Promise<boolean>,
@@ -388,6 +431,8 @@ const api = {
       ipcRenderer.invoke("ai:models:list", draft) as Promise<
         { ok: true; models: string[] } | { ok: false; error: string }
       >,
+    txt2imgInvoke: (draft: AiTxt2ImgInvokeDraft) =>
+      ipcRenderer.invoke("ai:txt2img", draft) as Promise<AiTxt2ImgInvokeResult>,
     testChat: (draft: Record<string, unknown>) =>
       ipcRenderer.invoke("ai:test:chat", draft) as Promise<
         { ok: true } | { ok: false; error: string }
@@ -401,10 +446,7 @@ const api = {
       apiKey: string;
       model: string;
     }) =>
-      ipcRenderer.invoke(
-        "ai:embedding:probeDimension",
-        draft,
-      ) as Promise<
+      ipcRenderer.invoke("ai:embedding:probeDimension", draft) as Promise<
         { ok: true; dimension: number } | { ok: false; error: string }
       >,
     threadList: (bookHash: string) =>
@@ -419,7 +461,11 @@ const api = {
         }>
       >,
     threadCreate: (bookHash: string, title?: string) =>
-      ipcRenderer.invoke("ai:thread:create", bookHash, title) as Promise<string>,
+      ipcRenderer.invoke(
+        "ai:thread:create",
+        bookHash,
+        title,
+      ) as Promise<string>,
     threadRename: (threadId: string, title: string, userChosen?: boolean) =>
       ipcRenderer.invoke(
         "ai:thread:rename",
@@ -429,6 +475,15 @@ const api = {
       ) as Promise<void>,
     threadDelete: (threadId: string) =>
       ipcRenderer.invoke("ai:thread:delete", threadId) as Promise<void>,
+    threadDeleteEmptyForBook: (
+      bookHash: string,
+      exceptThreadId?: string | null,
+    ) =>
+      ipcRenderer.invoke(
+        "ai:thread:deleteEmptyForBook",
+        bookHash,
+        exceptThreadId ?? undefined,
+      ) as Promise<void>,
     messageList: (threadId: string) =>
       ipcRenderer.invoke("ai:message:list", threadId) as Promise<
         Array<{
@@ -469,6 +524,59 @@ const api = {
         | { ok: false; cancelled: true }
         | { ok: false; error: string }
       >,
+    portraitExtract: (payload: {
+      bookHash: string;
+      characterName: string;
+      spoilerSafe?: boolean;
+      activeChapterIdx?: number;
+      /** 与 portraitInferBookStyle、portraitRetrieveAbort 对齐，用于中止本轮检索 */
+      retrieveSessionId?: number;
+    }) =>
+      ipcRenderer.invoke("ai:portrait:extract", payload) as Promise<
+        PortraitExtractResult | { error: string }
+      >,
+    portraitTranslateSdPrompt: (payload: {
+      styleZh?: string;
+      promptZh: string;
+      negativeZh: string;
+    }) =>
+      ipcRenderer.invoke("ai:portrait:translateSdPrompt", payload) as Promise<
+        | { style_en: string; prompt_en: string; negative_en: string }
+        | { error: string }
+      >,
+    portraitInferBookStyle: (payload: {
+      bookHash: string;
+      fileTitle?: string;
+      spoilerSafe?: boolean;
+      activeChapterIdx?: number;
+      retrieveSessionId?: number;
+    }) =>
+      ipcRenderer.invoke("ai:portrait:inferStyle", payload) as Promise<
+        BookStyleInferResult | { error: string }
+      >,
+    portraitRetrieveAbort: (retrieveSessionId: number) =>
+      ipcRenderer.invoke(
+        "ai:portrait:retrieve:abort",
+        retrieveSessionId,
+      ) as Promise<{ ok: true } | { ok: false }>,
+    portraitRetrieveSessionDispose: (retrieveSessionId: number) =>
+      ipcRenderer.invoke(
+        "ai:portrait:retrieve:session:dispose",
+        retrieveSessionId,
+      ) as Promise<{ ok: true } | { ok: false }>,
+    portraitTxt2ImgToPath: (payload: {
+      outputPath: string;
+      styleZh?: string;
+      promptZh: string;
+      negativeZh: string;
+    }) =>
+      ipcRenderer.invoke("ai:portrait:txt2imgToPath", payload) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    portraitTxt2ImgToPathAbort: () =>
+      ipcRenderer.invoke("ai:portrait:txt2imgToPath:abort") as Promise<{
+        ok: true;
+      }>,
     onChatChunk: (
       cb: (payload: { requestId: number; delta: string }) => void,
     ) => {
@@ -485,8 +593,10 @@ const api = {
     onChatError: (
       cb: (payload: { requestId: number; message: string }) => void,
     ) => {
-      const fn = (_: unknown, payload: { requestId: number; message: string }) =>
-        cb(payload);
+      const fn = (
+        _: unknown,
+        payload: { requestId: number; message: string },
+      ) => cb(payload);
       ipcRenderer.on("ai:chat:error", fn);
       return () => ipcRenderer.off("ai:chat:error", fn);
     },

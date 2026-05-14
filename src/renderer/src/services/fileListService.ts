@@ -1,4 +1,8 @@
 import type { CategoryEditorRow } from "../constants/fileCategories";
+import type {
+  ColorTxtOpenDialogOptions,
+  ColorTxtOpenDialogResult,
+} from "@shared/colorTxtOpenSaveDialog";
 
 export type TxtFileItem = {
   name: string;
@@ -10,13 +14,14 @@ export type TxtFileItem = {
   category?: string;
 };
 
-type OpenTxtDirectoryDialog = () => Promise<{
-  dirPaths: string[];
-  files: TxtFileItem[];
-} | null>;
-
 type ColorTxtShellApi = {
-  openTxtDirectoryDialog?: OpenTxtDirectoryDialog;
+  showOpenDialog?: (
+    o: ColorTxtOpenDialogOptions,
+  ) => Promise<ColorTxtOpenDialogResult>;
+  listTxtFilesInDirectory?: (dirPath: string) => Promise<{
+    dirPath: string;
+    files: TxtFileItem[];
+  }>;
 };
 
 export function basenameFromPath(filePath: string) {
@@ -142,17 +147,36 @@ export async function readTxtDirectoryFromDialog(
   | { ok: true; dirPaths: string[]; files: TxtFileItem[] }
   | { ok: false; reason: "missingApi" | "cancelled" }
 > {
-  const openDirectory = colorTxt?.openTxtDirectoryDialog;
-  if (typeof openDirectory !== "function") {
+  if (
+    !colorTxt ||
+    typeof colorTxt.showOpenDialog !== "function" ||
+    typeof colorTxt.listTxtFilesInDirectory !== "function"
+  ) {
     return { ok: false, reason: "missingApi" };
   }
 
-  const result = await openDirectory();
-  if (!result) return { ok: false, reason: "cancelled" };
+  const r = await colorTxt.showOpenDialog({
+    properties: ["openDirectory", "multiSelections"],
+  });
+  if (r.canceled || r.filePaths.length === 0) {
+    return { ok: false, reason: "cancelled" };
+  }
+
+  const dirPaths = r.filePaths;
+  const byPath = new Map<string, TxtFileItem>();
+  for (const dirPath of dirPaths) {
+    const batch = await colorTxt.listTxtFilesInDirectory(dirPath);
+    for (const f of batch.files) {
+      byPath.set(f.path, f);
+    }
+  }
+  const files = Array.from(byPath.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, "zh-Hans-CN"),
+  );
 
   return {
     ok: true,
-    dirPaths: result.dirPaths,
-    files: result.files.map(normalizeTxtFileItem),
+    dirPaths,
+    files: files.map(normalizeTxtFileItem),
   };
 }

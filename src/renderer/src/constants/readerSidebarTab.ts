@@ -5,4 +5,5 @@ export type ReaderSidebarTab =
   | "bookmarks"
   | "highlights"
   | "aiAssistant"
+  | "character"
   | "search";

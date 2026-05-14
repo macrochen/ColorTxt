@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, toRaw, useTemplateRef, watch } from "vue";
+import { computed, nextTick, ref, toRaw, useTemplateRef, watch } from "vue";
 import type { AIConfig } from "@shared/aiTypes";
 import { defaultAIConfig } from "@shared/aiTypes";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
@@ -14,10 +14,12 @@ import SettingsGeneralPanel from "./SettingsGeneralPanel.vue";
 import SettingsReadingPanel from "./SettingsReadingPanel.vue";
 import SettingsAIPanel from "./SettingsAIPanel.vue";
 import SettingsVectorModelPanel from "./SettingsVectorModelPanel.vue";
+import SettingsTxt2ImgPanel from "./SettingsTxt2ImgPanel.vue";
 import SettingsSkillsPanel from "./SettingsSkillsPanel.vue";
 import {
   clampLineHeightMultipleForFontSize,
   defaultChapterMinCharCount,
+  defaultCompressBlankKeepOneBlank,
   defaultFullscreenReaderWidthPercent,
   defaultMonacoSmoothScrolling,
   defaultReaderFontSize,
@@ -25,12 +27,18 @@ import {
   defaultRecentFilesHistoryLimit,
   defaultRestoreSessionOnStartup,
   defaultSyncCurrentFile,
+  defaultTxtrDelimitedMatchCrossLine,
   maxLineHeightMultipleForFontSize,
   persistKey,
   skipUnloadPersistenceSessionKey,
+  APP_DISPLAY_NAME,
 } from "../constants/appUi";
-import { appAlert, appConfirm } from "../services/appDialog";
+import { appAlert } from "../services/appDialog";
 import { icons } from "../icons";
+import {
+  resolveDefaultCharacterPortraitCacheDirSync,
+  resolveDefaultEbookConvertOutputDirSync,
+} from "../utils/defaultCacheDirs";
 
 export type SettingsApplyPayload = {
   restoreSessionOnStartup: boolean;
@@ -44,6 +52,7 @@ export type SettingsApplyPayload = {
   compressBlankKeepOneBlank: boolean;
   txtrDelimitedMatchCrossLine: boolean;
   ebookConvertOutputDir: string;
+  characterPortraitCacheDir: string;
   aiSkillsEnabled: Record<string, boolean>;
   aiSkillOverrides: Record<string, AiSkillUserOverride>;
   aiCustomSkills: AiCustomSkill[];
@@ -64,6 +73,7 @@ const props = defineProps<{
   monacoCustomHighlight: boolean;
   txtrDelimitedMatchCrossLine: boolean;
   ebookConvertOutputDir: string;
+  characterPortraitCacheDir: string;
   aiSkillsEnabled: Record<string, boolean>;
   aiSkillOverrides: Record<string, AiSkillUserOverride>;
   aiCustomSkills: AiCustomSkill[];
@@ -95,10 +105,14 @@ const draftFontSize = ref(14);
 const draftLineHeightMultiple = ref(1.5);
 const draftMonacoSmoothScrolling = ref(true);
 const draftCompressBlankKeepOneBlank = ref(false);
-const draftTxtrDelimitedMatchCrossLine = ref(false);
+const draftTxtrDelimitedMatchCrossLine = ref(
+  defaultTxtrDelimitedMatchCrossLine,
+);
 const draftEbookConvertOutputDir = ref("");
+const draftCharacterPortraitCacheDir = ref("");
 
 const draftAi = ref<AIConfig>(structuredClone(defaultAIConfig));
+const showAiExtensionTabs = computed(() => draftAi.value.aiEnabled);
 const loadedAiDimension = ref(1536);
 const draftAiSkillsEnabled = ref<Record<string, boolean>>(
   mergeAiSkillsEnabled(undefined, []),
@@ -123,6 +137,7 @@ function syncDraftFromProps() {
   draftCompressBlankKeepOneBlank.value = props.compressBlankKeepOneBlank;
   draftTxtrDelimitedMatchCrossLine.value = props.txtrDelimitedMatchCrossLine;
   draftEbookConvertOutputDir.value = props.ebookConvertOutputDir;
+  draftCharacterPortraitCacheDir.value = props.characterPortraitCacheDir;
   draftAiSkillOverrides.value = mergeAiSkillOverrides(props.aiSkillOverrides);
   draftAiCustomSkills.value = mergeAiCustomSkills(props.aiCustomSkills ?? []);
   draftAiSkillsEnabled.value = mergeAiSkillsEnabled(
@@ -165,12 +180,26 @@ watch(activeTab, () => {
   });
 });
 
+watch(
+  () => draftAi.value.aiEnabled,
+  (en) => {
+    if (
+      !en &&
+      (activeTab.value === "vectorModel" ||
+        activeTab.value === "txt2img" ||
+        activeTab.value === "skills")
+    ) {
+      activeTab.value = "ai";
+    }
+  },
+);
+
 function resetGeneralDraft() {
   draftRestore.value = defaultRestoreSessionOnStartup;
   draftSyncCurrentFile.value = defaultSyncCurrentFile;
   draftRecentLimit.value = defaultRecentFilesHistoryLimit;
   draftChapterMinCharCount.value = defaultChapterMinCharCount;
-  draftEbookConvertOutputDir.value = "";
+  draftEbookConvertOutputDir.value = resolveDefaultEbookConvertOutputDirSync();
 }
 
 function resetReadingDraft() {
@@ -180,8 +209,8 @@ function resetReadingDraft() {
     defaultReaderLineHeightMultiple,
   );
   draftMonacoSmoothScrolling.value = defaultMonacoSmoothScrolling;
-  draftCompressBlankKeepOneBlank.value = false;
-  draftTxtrDelimitedMatchCrossLine.value = false;
+  draftCompressBlankKeepOneBlank.value = defaultCompressBlankKeepOneBlank;
+  draftTxtrDelimitedMatchCrossLine.value = defaultTxtrDelimitedMatchCrossLine;
   draftFullscreenReaderWidthPercent.value = defaultFullscreenReaderWidthPercent;
 }
 
@@ -189,6 +218,7 @@ function resetAiDraft() {
   const def = defaultAIConfig;
   draftAi.value = {
     ...draftAi.value,
+    aiEnabled: def.aiEnabled,
     chat: structuredClone(def.chat),
     quickQuestions: structuredClone(def.quickQuestions),
   };
@@ -204,6 +234,15 @@ function resetVectorModelDraft() {
   };
 }
 
+function resetTxt2ImgDraft() {
+  draftAi.value = {
+    ...draftAi.value,
+    txt2img: structuredClone(defaultAIConfig.txt2img),
+  };
+  draftCharacterPortraitCacheDir.value =
+    resolveDefaultCharacterPortraitCacheDirSync();
+}
+
 function resetSkillsDraft() {
   draftAiSkillOverrides.value = mergeAiSkillOverrides(undefined);
   draftAiCustomSkills.value = [];
@@ -215,6 +254,7 @@ function onResetCurrentTab() {
   else if (activeTab.value === "reading") resetReadingDraft();
   else if (activeTab.value === "ai") resetAiDraft();
   else if (activeTab.value === "vectorModel") resetVectorModelDraft();
+  else if (activeTab.value === "txt2img") resetTxt2ImgDraft();
   else if (activeTab.value === "skills") resetSkillsDraft();
 }
 
@@ -224,11 +264,18 @@ function onCancel() {
 
 async function onConfirm() {
   if (draftAi.value.embedding.dimension !== loadedAiDimension.value) {
-    const ok = await appConfirm(
-      "向量维度已修改，保存后将清空所有已构建的书籍向量索引。是否继续？",
-      "确认保存",
-    );
-    if (!ok) return;
+    if (!window.colorTxt) return;
+    const r = await window.colorTxt.showMessageBox({
+      type: "warning",
+      title: APP_DISPLAY_NAME,
+      buttons: ["取消", "保存"],
+      defaultId: 1,
+      cancelId: 0,
+      message:
+        "向量维度已修改，保存后将清空所有已构建的书籍向量索引，是否继续？",
+      noLink: true,
+    });
+    if (r.response !== 1) return;
   }
 
   const aiPayload = JSON.parse(
@@ -253,6 +300,7 @@ async function onConfirm() {
     compressBlankKeepOneBlank: draftCompressBlankKeepOneBlank.value,
     txtrDelimitedMatchCrossLine: draftTxtrDelimitedMatchCrossLine.value,
     ebookConvertOutputDir: draftEbookConvertOutputDir.value.trim(),
+    characterPortraitCacheDir: draftCharacterPortraitCacheDir.value.trim(),
     aiSkillsEnabled: mergeAiSkillsEnabled(
       draftAiSkillsEnabled.value,
       draftAiCustomSkills.value.map((s) => s.id),
@@ -263,8 +311,18 @@ async function onConfirm() {
 }
 
 async function onClearCache() {
-  const ok = await window.colorTxt.confirmClearAppCache();
-  if (!ok) return;
+  const r = await window.colorTxt.showMessageBox({
+    type: "warning",
+    title: APP_DISPLAY_NAME,
+    buttons: ["取消", "清除"],
+    defaultId: 1,
+    cancelId: 0,
+    message: "是否清除应用缓存？",
+    detail:
+      "将删除会话、最近打开、文件列表、书签与阅读进度等本地数据；界面设置（字号、主题、配色等）将保留。清除后窗口会重新加载。",
+    noLink: true,
+  });
+  if (r.response !== 1) return;
   try {
     sessionStorage.setItem(skipUnloadPersistenceSessionKey, "1");
   } catch {
@@ -292,7 +350,10 @@ async function onClearCache() {
     :body-scroll="false"
   >
     <div class="settingsLayout">
-      <SettingsTabBar v-model:active-tab="activeTab" />
+      <SettingsTabBar
+        v-model:active-tab="activeTab"
+        :show-ai-extension-tabs="showAiExtensionTabs"
+      />
 
       <div class="settingsScroll">
         <div ref="settingsTabScrollerEl" class="settingsTabScroller">
@@ -333,6 +394,14 @@ async function onClearCache() {
               v-model="draftAi"
             />
 
+            <SettingsTxt2ImgPanel
+              v-show="activeTab === 'txt2img'"
+              v-model="draftAi"
+              v-model:character-portrait-cache-dir="
+                draftCharacterPortraitCacheDir
+              "
+            />
+
             <SettingsSkillsPanel
               ref="skillsPanelRef"
               v-show="activeTab === 'skills'"
@@ -363,7 +432,11 @@ async function onClearCache() {
             size="large"
             @click="onAddSkillClick"
           >
-            <span class="settingsFooterAddIcon" aria-hidden="true" v-html="icons.add" />
+            <span
+              class="settingsFooterAddIcon"
+              aria-hidden="true"
+              v-html="icons.add"
+            />
             添加技能
           </button>
         </div>
@@ -473,9 +546,9 @@ async function onClearCache() {
 }
 </style>
 
-<style scoped>
+<style>
 /* 非 scoped：与配色面板一致拔高模态高度 */
-:deep(.settingsPanelModal) {
+.settingsPanelModal {
   height: min(640px, calc(100vh - 48px));
 }
 </style>

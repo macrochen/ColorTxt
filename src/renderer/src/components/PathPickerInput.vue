@@ -2,10 +2,9 @@
 import { computed, ref } from "vue";
 import { icons } from "../icons";
 
-const path = defineModel<string>({ default: "" });
-
 const props = withDefaults(
   defineProps<{
+    modelValue: string;
     /** true：目录；false：文件 */
     isDirectory?: boolean;
     placeholder?: string;
@@ -16,11 +15,20 @@ const props = withDefaults(
     ariaLabel?: string;
   }>(),
   {
+    modelValue: "",
     isDirectory: false,
     inputReadonly: false,
     disabled: false,
   },
 );
+
+const emit = defineEmits<{
+  "update:modelValue": [v: string];
+}>();
+
+function setPath(v: string) {
+  emit("update:modelValue", v);
+}
 
 const inputAria = computed(() => {
   if (props.ariaLabel?.trim()) return props.ariaLabel.trim();
@@ -78,11 +86,11 @@ async function onDrop(ev: DragEvent) {
       const st = await api.stat(fsPath);
       if (props.isDirectory) {
         if (st.isDirectory) {
-          path.value = fsPath;
+          setPath(fsPath);
           return;
         }
       } else if (st.isFile) {
-        path.value = fsPath;
+        setPath(fsPath);
         return;
       }
     } catch {
@@ -94,11 +102,21 @@ async function onDrop(ev: DragEvent) {
 async function onBrowse() {
   if (props.disabled) return;
   const api = window.colorTxt;
-  if (!api) return;
-  const p = props.isDirectory
-    ? await api.openDirectoryPlainDialog()
-    : await api.openFilePlainDialog();
-  if (p) path.value = p;
+  if (!api?.showOpenDialog) return;
+  const r = await api.showOpenDialog(
+    props.isDirectory
+      ? { properties: ["openDirectory"] }
+      : { properties: ["openFile"] },
+  );
+  const p =
+    r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
+  if (p) setPath(p);
+}
+
+function onInput(ev: Event) {
+  if (props.inputReadonly || props.disabled) return;
+  const t = ev.target as HTMLInputElement | null;
+  setPath(t?.value ?? "");
 }
 </script>
 
@@ -112,14 +130,15 @@ async function onBrowse() {
     @drop="onDrop"
   >
     <input
-      v-model="path"
       class="pathPicker__input"
       :class="{ 'pathPicker__input--dragOver': isDragOver }"
       type="text"
+      :value="modelValue"
       :readonly="inputReadonly"
       :disabled="disabled"
       :placeholder="placeholder"
       :aria-label="inputAria"
+      @input="onInput"
     />
     <button
       type="button"
@@ -129,7 +148,11 @@ async function onBrowse() {
       :title="isDirectory ? '选择目录' : '选择文件'"
       @click="onBrowse"
     >
-      <span class="pathPicker__icon" aria-hidden="true" v-html="icons.folderOpen" />
+      <span
+        class="pathPicker__icon"
+        aria-hidden="true"
+        v-html="icons.folderOpen"
+      />
     </button>
   </div>
 </template>
@@ -154,7 +177,7 @@ async function onBrowse() {
   border: 1px solid var(--border);
   border-radius: 4px 0 0 4px;
   font-size: 12px;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--fg);
   transition:
     background 0.12s ease,

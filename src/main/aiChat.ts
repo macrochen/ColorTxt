@@ -254,6 +254,82 @@ export function abortChatRequest(requestId: number): void {
   chatAbortControllers.delete(requestId);
 }
 
+function extractNonStreamAssistantContent(json: unknown): string {
+  if (!json || typeof json !== "object") return "";
+  const o = json as Record<string, unknown>;
+  const ch0 = Array.isArray(o.choices) ? o.choices[0] : undefined;
+  if (!ch0 || typeof ch0 !== "object") return "";
+  const c = ch0 as Record<string, unknown>;
+  const msg = c.message;
+  if (msg && typeof msg === "object") {
+    const content = (msg as Record<string, unknown>).content;
+    if (typeof content === "string") return content;
+  }
+  const text = c.text;
+  if (typeof text === "string") return text;
+  return "";
+}
+
+/** 单次非流式 chat/completions（摘录 JSON、测试等） */
+export async function chatCompletionOnce(opts: {
+  chat: AIChatEndpoint;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  maxTokens?: number;
+  temperature?: number;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const url = `${normalizeBase(opts.chat.baseUrl)}/chat/completions`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (opts.chat.apiKey.trim()) {
+    headers.Authorization = `Bearer ${opts.chat.apiKey.trim()}`;
+  }
+  const model = opts.chat.model.trim();
+  if (!model) throw new Error("未配置对话模型");
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    signal: opts.signal,
+    body: JSON.stringify({
+      model,
+      messages: opts.messages,
+      temperature: opts.temperature ?? opts.chat.temperature,
+      max_tokens: opts.maxTokens ?? opts.chat.maxTokens,
+      stream: false,
+    }),
+  });
+
+  const raw = await res.text().catch(() => "");
+  if (!res.ok) {
+    let message = `HTTP ${res.status}: ${raw.slice(0, 600)}`;
+    if (raw.trim()) {
+      try {
+        const extracted = extractSseErrorMessage(JSON.parse(raw) as unknown);
+        if (extracted) message = extracted;
+      } catch {
+        /* keep */
+      }
+    }
+    throw new Error(message);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error("对话接口返回非 JSON");
+  }
+
+  const errMsg = extractSseErrorMessage(parsed);
+  if (errMsg) throw new Error(errMsg);
+
+  const text = extractNonStreamAssistantContent(parsed).trim();
+  if (!text) throw new Error("模型未返回正文");
+  return text;
+}
+
 export async function streamChatCompletion(opts: {
   chat: AIChatEndpoint;
   payload: AIChatStreamPayload;

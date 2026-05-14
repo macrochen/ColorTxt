@@ -229,7 +229,6 @@ function onResetBuiltinDefault() {
 
 .patternInput {
   width: 100%;
-  resize: none;
   min-height: 64px;
   font-family: Consolas, "Courier New", monospace;
 }

@@ -52,6 +52,7 @@ const props = defineProps<{
   highlightColorsLight: string[];
   highlightColorsDark: string[];
   ebookConvertOutputDir: string;
+  characterPortraitCacheDir: string;
   aiSkillsEnabled: Record<string, boolean>;
   aiSkillOverrides: Record<string, AiSkillUserOverride>;
   aiCustomSkills: AiCustomSkill[];
@@ -174,6 +175,7 @@ onBeforeUnmount(() => {
     :monaco-custom-highlight="monacoCustomHighlight"
     :txtr-delimited-match-cross-line="txtrDelimitedMatchCrossLine"
     :ebook-convert-output-dir="ebookConvertOutputDir"
+    :character-portrait-cache-dir="characterPortraitCacheDir"
     :ai-skills-enabled="aiSkillsEnabled"
     :ai-skill-overrides="aiSkillOverrides"
     :ai-custom-skills="aiCustomSkills"
@@ -261,9 +263,7 @@ onBeforeUnmount(() => {
     >
       <p class="dirScanLine" :title="dirListCurrentName">
         {{
-          ebookParsing
-            ? convertingHintText
-            : dirListCurrentName || "准备中…"
+          ebookParsing ? convertingHintText : dirListCurrentName || "准备中…"
         }}
       </p>
     </div>
@@ -319,7 +319,6 @@ onBeforeUnmount(() => {
 
 .bookmarkNoteInput {
   width: 100%;
-  resize: none;
   font-size: 14px;
   line-height: 1.45;
   overflow-wrap: anywhere;

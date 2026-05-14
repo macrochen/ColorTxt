@@ -5,6 +5,7 @@ import {
   type AIConfig,
   defaultAIConfig,
   normalizeAiQuickQuestions,
+  normalizeTxt2ImgConfig,
 } from "@shared/aiTypes";
 
 const CONFIG_REL = ["ai", "config.json"];
@@ -24,6 +25,9 @@ export function mergeAiConfigWithDefaults(raw: unknown): AIConfig {
   if (o.embedding && typeof o.embedding === "object") {
     Object.assign(base.embedding, o.embedding as object);
   }
+  if (typeof o.aiEnabled === "boolean") {
+    base.aiEnabled = o.aiEnabled;
+  }
   if (typeof o.embeddingEnabled === "boolean") {
     base.embeddingEnabled = o.embeddingEnabled;
   }
@@ -38,6 +42,7 @@ export function mergeAiConfigWithDefaults(raw: unknown): AIConfig {
     }
   }
   base.quickQuestions = normalizeAiQuickQuestions(o.quickQuestions);
+  base.txt2img = normalizeTxt2ImgConfig(o.txt2img);
   return base;
 }
 

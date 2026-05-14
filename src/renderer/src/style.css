@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "KingHwa OldSong";
+  src: url("./assets/KingHwa_OldSong1.0.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light;
   --bg: #f8f8f8;
@@ -61,6 +69,10 @@
   /* 首帧回退；运行时常量见 constants/readerPalette.ts，由 applyReaderSurfaceToDocument 写入 html */
   --reader-bg: #f4ead7;
   --reader-chapter-title: #b88230;
+
+  --female: #cc0033;
+  --male: #339933;
+  --unknown: #333333;
 }
 
 html.dark {
@@ -181,6 +193,9 @@ body,
 
 /* 按钮样式 */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--btn-bg);
   color: var(--fg);
   border: 1px solid var(--border);
@@ -197,6 +212,10 @@ body,
   color: var(--accent);
   border-color: var(--accent);
 }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* 工具栏等处：仅图标的方形按钮，在 .btn 基础上收窄内边距 */
 .btn.btnIconSquare {
@@ -209,17 +228,24 @@ body,
 .btn.btnIconSquare svg path {
   fill: currentColor;
 }
+
 .btn[size="large"] {
   padding: 6px 14px;
   font-size: 14px;
 }
+
+.btn svg path {
+  fill: currentColor;
+}
+
 .btn.primary {
   background: var(--accent);
   color: white;
   border-color: var(--accent);
 }
-.btn.primary:hover {
+.btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
+  color: white;
   border-color: var(--accent-hover);
 }
 .btn.success {
@@ -227,8 +253,9 @@ body,
   color: white;
   border-color: var(--success);
 }
-.btn.success:hover {
+.btn.success:hover:not(:disabled) {
   background: var(--success-hover);
+  color: white;
   border-color: var(--success-hover);
 }
 .btn.info {
@@ -236,8 +263,9 @@ body,
   color: white;
   border-color: var(--info);
 }
-.btn.info:hover {
+.btn.info:hover:not(:disabled) {
   background: var(--info-hover);
+  color: white;
   border-color: var(--info-hover);
 }
 .btn.warning {
@@ -245,8 +273,9 @@ body,
   color: white;
   border-color: var(--warning);
 }
-.btn.warning:hover {
+.btn.warning:hover:not(:disabled) {
   background: var(--warning-hover);
+  color: white;
   border-color: var(--warning-hover);
 }
 .btn.danger {
@@ -254,8 +283,9 @@ body,
   color: white;
   border-color: var(--danger);
 }
-.btn.danger:hover {
+.btn.danger:hover:not(:disabled) {
   background: var(--danger-hover);
+  color: white;
   border-color: var(--danger-hover);
 }
 
@@ -416,6 +446,12 @@ textarea {
   line-height: 1.4;
 }
 
+input[disabled],
+textarea[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 input:is([type="text"], [type="search"], [type="number"], [type="password"]) {
   padding: 6px 8px;
   border-radius: 4px;
@@ -423,6 +459,7 @@ input:is([type="text"], [type="search"], [type="number"], [type="password"]) {
 textarea {
   padding: 8px 10px;
   border-radius: 6px;
+  resize: none;
 }
 
 input:is(
@@ -539,6 +576,82 @@ textarea:focus {
 
 .appShellMenuItem--warning:hover:not(:disabled) {
   background: var(--warning-bg);
+}
+
+/** 阅读助手「用户取消」、角色卡检索提示等：与历史 aiUserStoppedBanner 视觉一致 */
+.aiNoticeBanner {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.aiNoticeBanner__icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--warning);
+}
+
+.aiNoticeBanner__icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.aiNoticeBanner__icon svg path {
+  fill: currentColor;
+}
+
+/** AI 阅读助手 / 角色卡编辑：胶囊开关（深度思考、防剧透） */
+.aiPillToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.aiPillToggle:hover:not(:disabled) {
+  background: var(--icon-btn-bg-hover);
+}
+
+.aiPillToggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.aiPillToggle--on {
+  color: var(--fg);
+  background: var(--icon-btn-bg-active);
+}
+
+.aiPillToggle__icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.aiPillToggle__icon svg path {
+  fill: currentColor;
 }
 
 .appShellMenuItemMark {

@@ -84,6 +84,10 @@ export default defineConfig({
     resolve: {
       alias: sharedResolveAlias,
     },
+    define: {
+      __APP_DISPLAY_NAME__: APP_DISPLAY_NAME_JSON,
+      __GITHUB_REPO_URL__: GITHUB_REPO_URL_JSON,
+    },
     build: {
       outDir: "dist/preload",
       lib: {

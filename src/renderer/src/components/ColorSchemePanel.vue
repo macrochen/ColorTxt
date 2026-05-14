@@ -305,11 +305,6 @@ watch(activeTab, (tab) => {
 </template>
 
 <style scoped>
-:deep(.colorSchemePanel) {
-  height: 560px;
-  max-height: unset;
-}
-
 .colorSchemeLayout {
   display: flex;
   flex-direction: column;
@@ -340,5 +335,11 @@ watch(activeTab, (tab) => {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+</style>
+
+<style>
+.colorSchemePanel {
+  height: 560px;
 }
 </style>

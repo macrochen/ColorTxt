@@ -194,7 +194,6 @@ async function onSave() {
   font-size: 13px;
   line-height: 1.45;
   font-family: inherit;
-  resize: none;
 }
 
 .skillEditFooter {

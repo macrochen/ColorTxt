@@ -1,5 +1,6 @@
 import { computed, nextTick, ref, watch, type Ref } from "vue";
 import type ReaderMain from "../components/ReaderMain.vue";
+import { APP_DISPLAY_NAME } from "../constants/appUi";
 import {
   findFileMetaRecord,
   type FileBookmarkItem,
@@ -197,8 +198,17 @@ export function useAppBookmarkPins(deps: {
     const path = deps.currentFile.value;
     if (!path) return;
     if (!window.colorTxt) return;
-    const confirmed = await window.colorTxt.confirmClearBookmarks();
-    if (!confirmed) return;
+    const r = await window.colorTxt.showMessageBox({
+      type: "warning",
+      title: APP_DISPLAY_NAME,
+      buttons: ["取消", "清空"],
+      defaultId: 1,
+      cancelId: 0,
+      message: "是否要清空当前文件的所有书签？",
+      detail: "此操作不可逆！",
+      noLink: true,
+    });
+    if (r.response !== 1) return;
     deps.clearBookmarks(path);
   }
 

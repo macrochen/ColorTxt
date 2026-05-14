@@ -6,12 +6,14 @@ import type {
   AIAgentStartPayload,
   AIChatEndpoint,
   AIChatToolCall,
+  AIConfig,
   AIEmbeddingEndpoint,
 } from "@shared/aiTypes";
 import {
   AI_USER_VISIBLE_CH_REF_RULE,
   formatAiToolChapterHeading,
 } from "@shared/aiChapterRefPrompt";
+import { CHAPTER_MATCH_RULES_SKILL_ID } from "@shared/aiAgentSkillToolNames";
 import {
   agentSkillToolFunctionName,
   buildAgentToolsWithSkills,
@@ -34,6 +36,7 @@ import {
   registerChatAbortController,
   releaseChatAbortController,
 } from "./aiChat";
+import { runCharacterPortraitExtract } from "./aiCharacterPortrait";
 
 function normalizeBase(u: string): string {
   return u.replace(/\/+$/, "");
@@ -107,6 +110,8 @@ function buildAgentSystemPrompt(
   configExtra: string,
   enabledSkills: AIAgentEnabledSkill[],
   ragEnabled: boolean,
+  /** 已启用「章节匹配规则」技能：RAG 不按防剧透截断章节（仅用于标题行格式） */
+  chapterMatchSkillRagUnrestricted: boolean,
 ): string {
   const lines: string[] = [
     "你是资深中文小说阅读助手，正在与用户讨论一部长篇作品。",
@@ -127,6 +132,7 @@ function buildAgentSystemPrompt(
       "- 一旦 ragSearch 已返回结果，请阅读其中的 chapterIndex、chapterTitle 与片段正文：chapterIndex 从 0 起，**调用 ragContext 与用户可见 `（ch=N）` 时 N 均须使用该 chapterIndex**。",
       "- 若需展开同一章更多原文，应改用 ragContext(chapterIndex)，参数与检索结果中的 chapterIndex 相同（从 0 起），或换用不同的检索关键词。",
       "- 信息已足够时，必须结束工具调用，直接输出最终自然语言答案，不要反复检索同一问题。",
+      "- 当用户需要**角色外貌**、全身/衣着描写摘要或 **Stable Diffusion 中文 prompt** 草案（侧栏提交 SD 时会自动译英）时，调用 **extractCharacterAppearance**，参数 `characterName` 为角色名；返回 JSON（含 `excerpts`、`appearance_zh`、`sd_prompt_zh`、`negative_zh`、`confidence_note` 及 `gender`、`age_text`、`identity_zh`、`bio_zh`、`relations_zh` 等）与侧栏「角色」同源。用户开启防剧透时工具结果仅含当前阅读章节及之前的片段。",
       "",
     );
   } else {
@@ -202,9 +208,12 @@ function buildAgentSystemPrompt(
       const titleBit = bookMeta.currentChapterTitle?.trim()
         ? ` · ${bookMeta.currentChapterTitle.trim()}`
         : "";
-      const spoilerToolRule = ragEnabled
-        ? "2. **工具层已限制**：`ragSearch` 仅返回当前章及之前的索引片段；`ragContext` 无法拉取当前章之后的原文。勿尝试绕过（例如臆造检索结果）。"
-        : "2. 未启用全书检索时，请自律勿透露明显超出用户阅读进度的剧情；不确定是否属于后文时请不写或明确说明无法确认。";
+      const spoilerToolRule =
+        ragEnabled && chapterMatchSkillRagUnrestricted
+          ? "2. **例外（本轮已启用「章节匹配规则」技能）**：`ragSearch` / `ragContext` **不按防剧透截断章节**，以便从全书抽取章节标题行样本。你**只能**将这些结果用于归纳正则与行格式；**最终回答仍不得**叙述、总结或暗示当前阅读进度之后的剧情。"
+          : ragEnabled
+            ? "2. **工具层已限制**：`ragSearch` 仅返回当前章及之前的索引片段；`ragContext` 无法拉取当前章之后的原文。勿尝试绕过（例如臆造检索结果）。"
+            : "2. 未启用全书检索时，请自律勿透露明显超出用户阅读进度的剧情；不确定是否属于后文时请不写或明确说明无法确认。";
       lines.push(
         `读者当前进度：**第 ${cur + 1} 章**（全书 ${bookMeta.chapterCount} 章）${titleBit}。`,
         "**严格意义下当前章之后的全部正文均属「后文」，不得主动泄露。**",
@@ -683,6 +692,11 @@ async function dispatchTool(
     /** 防剧透：仅允许 chapterIndex ≤ 该值；null 表示不限制 */
     spoilerMaxChapterIndex: number | null;
     enabledSkills: AIAgentEnabledSkill[];
+    aiConfig: AIConfig;
+    /** extractCharacterAppearance：与 payload.spoilerSafe 一致 */
+    portraitSpoilerSafe: boolean;
+    /** extractCharacterAppearance：currentChapterIndex，可能为 -1 */
+    portraitActiveChapterIdx: number;
   },
 ): Promise<string> {
   let args: Record<string, unknown> = {};
@@ -727,6 +741,38 @@ async function dispatchTool(
         toolCallId: ctx.toolCallId,
         name,
         ok: true,
+        preview,
+        full,
+      });
+      return full;
+    }
+    if (name === "extractCharacterAppearance") {
+      if (!ctx.ragEnabled) {
+        throw new Error(
+          "向量模型未启用（请在设置 → 向量模型中开启并构建索引）。",
+        );
+      }
+      const characterName = String(args.characterName ?? "").trim();
+      if (!characterName) throw new Error("缺少有效的 characterName");
+      const result = await runCharacterPortraitExtract(ctx.aiConfig, {
+        bookHash: ctx.bookHash,
+        characterName,
+        spoilerSafe: ctx.portraitSpoilerSafe,
+        activeChapterIdx: ctx.portraitActiveChapterIdx,
+      });
+      const full = JSON.stringify(result);
+      let preview: string;
+      try {
+        preview = previewJson(JSON.parse(full) as Record<string, unknown>);
+      } catch {
+        preview = full.slice(0, 400);
+      }
+      ctx.emit({
+        type: "tool_result",
+        requestId: ctx.requestId,
+        toolCallId: ctx.toolCallId,
+        name,
+        ok: !("error" in result && typeof result.error === "string"),
         preview,
         full,
       });
@@ -816,6 +862,8 @@ export async function runAgentChat(opts: {
   embedding: AIEmbeddingEndpoint;
   /** false 时不注册 RAG 工具，系统提示改为「检索已关闭」 */
   embeddingEnabled: boolean;
+  /** 完整 AI 配置（角色外貌工具等） */
+  aiConfig: AIConfig;
   payload: AIAgentStartPayload;
   configSystemPromptExtra: string;
   webContents: WebContents;
@@ -825,6 +873,7 @@ export async function runAgentChat(opts: {
     chat,
     embedding,
     embeddingEnabled,
+    aiConfig,
     payload,
     configSystemPromptExtra,
     webContents,
@@ -841,12 +890,25 @@ export async function runAgentChat(opts: {
   };
 
   const ac = registerChatAbortController(requestId);
+  const enabledSkills = payload.enabledSkills ?? [];
+  const chapterMatchSkillRagUnrestricted = enabledSkills.some(
+    (s) => s.id === CHAPTER_MATCH_RULES_SKILL_ID,
+  );
   const spoilerMaxChapterIndex =
     payload.spoilerSafe &&
     typeof payload.bookMeta.currentChapterIndex === "number" &&
     payload.bookMeta.currentChapterIndex >= 0
       ? payload.bookMeta.currentChapterIndex
       : null;
+  const ragSpoilerMaxChapterIndex = chapterMatchSkillRagUnrestricted
+    ? null
+    : spoilerMaxChapterIndex;
+
+  const portraitActiveChapterIdx =
+    typeof payload.bookMeta.currentChapterIndex === "number" &&
+    Number.isFinite(payload.bookMeta.currentChapterIndex)
+      ? Math.trunc(payload.bookMeta.currentChapterIndex)
+      : -1;
 
   const sliding =
     typeof payload.slidingWindowSize === "number"
@@ -865,7 +927,6 @@ export async function runAgentChat(opts: {
   }
 
   try {
-    const enabledSkills = payload.enabledSkills ?? [];
     const rows = listMessages(payload.threadId).filter(
       (r) => r.role !== "system",
     );
@@ -882,6 +943,7 @@ export async function runAgentChat(opts: {
       configSystemPromptExtra,
       enabledSkills,
       ragEnabled,
+      chapterMatchSkillRagUnrestricted,
     );
 
     /** 上一轮**实际执行**过的工具指纹；重复指纹则跳过嵌入/检索以打破死循环 */
@@ -1030,8 +1092,11 @@ export async function runAgentChat(opts: {
               requestId,
               toolCallId: tc.id,
               emit,
-              spoilerMaxChapterIndex,
+              spoilerMaxChapterIndex: ragSpoilerMaxChapterIndex,
               enabledSkills,
+              aiConfig,
+              portraitSpoilerSafe: payload.spoilerSafe === true,
+              portraitActiveChapterIdx,
             });
           }
           appendAgentMessageRow({

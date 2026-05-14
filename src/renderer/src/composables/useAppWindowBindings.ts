@@ -7,7 +7,7 @@ import {
 } from "../utils/dragDropFsPaths";
 import { appAlert } from "../services/appDialog";
 import { bindAppShortcuts } from "../services/shortcutService";
-import { hasModalOnStack } from "../utils/modalStack";
+import { hasModalOrEscBeforeModalLayer } from "../utils/modalStack";
 import { useAppFileSession } from "./useAppFileSession";
 import { useTxtStreamPipeline } from "./useTxtStreamPipeline";
 import type { ShortcutBindingMap } from "../services/shortcutRegistry";
@@ -162,7 +162,7 @@ export function useAppWindowBindings(deps: {
         return;
       }
       // 有模态时仅由 modalStack 的捕获监听 resolve 一次；此处再 resolve 会关两层
-      if (hasModalOnStack()) return;
+      if (hasModalOrEscBeforeModalLayer()) return;
       if (keyboardEventFromReaderSidebar(ev)) return;
       ev.preventDefault();
       ev.stopPropagation();
@@ -225,7 +225,8 @@ export function useAppWindowBindings(deps: {
         },
         () => deps.shortcutBindings.value,
         (ev) =>
-          !hasModalOnStack() && !keyboardEventFromReaderSidebar(ev),
+          !hasModalOrEscBeforeModalLayer() &&
+          !keyboardEventFromReaderSidebar(ev),
       ),
     );
 

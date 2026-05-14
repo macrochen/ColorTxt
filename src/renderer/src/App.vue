@@ -15,9 +15,14 @@ import ReaderSidebar from "./components/ReaderSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import ReaderMain from "./components/ReaderMain.vue";
 import AppDialogHost from "./components/AppDialogHost.vue";
+import AppToastHost from "./components/AppToastHost.vue";
 import AppOverlays from "./components/AppOverlays.vue";
 import type { SettingsApplyPayload } from "./components/SettingsPanel.vue";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
+import type {
+  CharacterBookStylePersisted,
+  CharacterRosterEntry,
+} from "@shared/characterTypes";
 import {
   mergeAiCustomSkills,
   mergeAiSkillOverrides,
@@ -75,6 +80,7 @@ import {
   emptyFileHintText,
   readerTxtLoadingHintText,
   GITHUB_REPO_URL,
+  APP_DISPLAY_NAME,
   maxFullscreenReaderWidthPercent,
   clampLineHeightMultipleForFontSize,
   maxFontSize,
@@ -118,13 +124,23 @@ import {
 } from "./constants/fileCategories";
 
 const readerRef = ref<InstanceType<typeof ReaderMain> | null>(null);
-/** 全屏侧栏文件列表是否有 Teleport 弹层打开（分类/筛选下拉、右键菜单等） */
+/** 全屏侧栏文件列表 Teleport 弹层（分类/筛选下拉、右键菜单等） */
 const fullscreenFileListPopoversOpen = ref(false);
+/** AI 阅读助手：历史/导出/模型菜单等 Teleport；与文件列表合并后交给全屏侧栏收起逻辑 */
+const fullscreenAiAssistantPopoversOpen = ref(false);
+/** 角色卡：编辑/添加角色抽屉打开 */
+const fullscreenCharacterDrawerOpen = ref(false);
+const fullscreenSidebarPopoversSuppressCollapse = computed(
+  () =>
+    fullscreenFileListPopoversOpen.value ||
+    fullscreenAiAssistantPopoversOpen.value ||
+    fullscreenCharacterDrawerOpen.value,
+);
 /** 全屏下打开设置/配色弹框期间，禁用左缘感应自动唤起侧栏 */
 const suppressFullscreenSidebarHover = ref(false);
 const chrome = useAppReaderChrome({
   readerRef,
-  fullscreenFileListPopoversOpen,
+  fullscreenSidebarPopoversSuppressCollapse,
   suppressFullscreenSidebarHover,
 });
 const {
@@ -222,6 +238,24 @@ const showChapterCounts = ref(defaultShowChapterCounts);
 const aiAssistantDeepThinking = ref(false);
 const aiAssistantSpoilerSafe = ref(false);
 const sidebarTab = ref<ReaderSidebarTab>("files");
+/** 设置 → AI「启用 AI 阅读助手功能」，控制侧栏「AI 阅读助手」 */
+const aiFeaturesEnabled = ref(true);
+/** AI 开启且文生图开启时显示「角色卡」标签 */
+const txt2imgFeatureEnabled = ref(true);
+/** 设置「确定」保存后递增，供 AI 阅读助手重新拉取快速提问等配置 */
+const aiAssistantConfigSyncNonce = ref(0);
+
+async function refreshAiSidebarFlags() {
+  try {
+    const c = await window.colorTxt.ai.configGet();
+    aiFeaturesEnabled.value = Boolean(c.aiEnabled);
+    txt2imgFeatureEnabled.value =
+      aiFeaturesEnabled.value && Boolean(c.txt2img?.enabled);
+  } catch {
+    aiFeaturesEnabled.value = true;
+    txt2imgFeatureEnabled.value = true;
+  }
+}
 
 onMounted(() => {
   /** 旧版侧栏曾含扩展视图 tab（`ext:`）或设置「扩展」占位 id */
@@ -229,6 +263,24 @@ onMounted(() => {
   if (t === "extensions" || t.startsWith("ext:")) {
     sidebarTab.value = "files";
   }
+  void refreshAiSidebarFlags();
+});
+
+watch(showSettingsPanel, (open, wasOpen) => {
+  if (wasOpen && !open) void refreshAiSidebarFlags();
+});
+
+watch(aiFeaturesEnabled, (en) => {
+  if (
+    !en &&
+    (sidebarTab.value === "aiAssistant" || sidebarTab.value === "character")
+  ) {
+    sidebarTab.value = "files";
+  }
+});
+
+watch(txt2imgFeatureEnabled, (en) => {
+  if (!en && sidebarTab.value === "character") sidebarTab.value = "files";
 });
 type SidebarSearchResult = {
   physicalLine: number;
@@ -338,7 +390,9 @@ const ebookConvertOutputDir = ref(
     }
   })(),
 );
-/** AI 技能开关（设置 → 技能） */
+/** 角色立绘缓存根目录（绝对路径）；启动后由持久化或默认 userData/CharacterPortrait 填充 */
+const characterPortraitCacheDir = ref("");
+/** 技能开关（设置 → 技能） */
 const aiSkillsEnabled = ref<Record<string, boolean>>(
   mergeAiSkillsEnabled(undefined, []),
 );
@@ -374,11 +428,44 @@ const highlightColorsForReader = computed(() =>
     : highlightColorsDark.value,
 );
 
-const currentFileHighlightWords = computed(() => {
+const currentFileMetaRecord = computed(() => {
   const p = currentFile.value;
   if (!p) return undefined;
-  return findFileMetaRecord(fileMetaRecords.value, p)?.highlightWordsByIndex;
+  return findFileMetaRecord(fileMetaRecords.value, p);
 });
+
+const currentFileCharacterRoster = computed(
+  () => currentFileMetaRecord.value?.characterRoster ?? [],
+);
+
+const currentFileCharacterBookStyle = computed(
+  () => currentFileMetaRecord.value?.characterBookStyle,
+);
+
+const currentFileHighlightWords = computed(
+  () => currentFileMetaRecord.value?.highlightWordsByIndex,
+);
+
+function onCharacterFileMetaPatch(payload: {
+  characterBookStyle?: CharacterBookStylePersisted;
+  characterRoster?: CharacterRosterEntry[];
+}) {
+  const path = currentFile.value;
+  if (!path) return;
+  fileMetaRecords.value = upsertFileMetaRecord(
+    fileMetaRecords.value,
+    path,
+    () => ({
+      ...(payload.characterBookStyle !== undefined
+        ? { characterBookStyle: payload.characterBookStyle }
+        : {}),
+      ...(payload.characterRoster !== undefined
+        ? { characterRoster: payload.characterRoster }
+        : {}),
+    }),
+  );
+  persistFileMeta();
+}
 
 const currentFileHighlightTerms = computed<
   Array<{ text: string; color: string; colorIndex: number }>
@@ -498,6 +585,7 @@ const persistence = useAppPersistence({
   highlightColorsLight,
   highlightColorsDark,
   ebookConvertOutputDir,
+  characterPortraitCacheDir,
   fileCategory,
   fileSort,
   fileCategoryCatalog,
@@ -1074,8 +1162,17 @@ function onRemoveHighlightTerm(payload: { text: string }) {
 async function clearCurrentFileHighlightTerms() {
   const path = currentFile.value;
   if (!path) return;
-  const confirmed = await window.colorTxt.confirmClearHighlightTerms();
-  if (!confirmed) return;
+  const r = await window.colorTxt.showMessageBox({
+    type: "warning",
+    title: APP_DISPLAY_NAME,
+    buttons: ["取消", "清空"],
+    defaultId: 1,
+    cancelId: 0,
+    message: "是否要清空当前文件的所有高亮词？",
+    detail: "此操作不可逆！",
+    noLink: true,
+  });
+  if (r.response !== 1) return;
   fileMetaRecords.value = upsertFileMetaRecord(
     fileMetaRecords.value,
     path,
@@ -1316,7 +1413,7 @@ onBeforeUnmount(() => {
   hasInlineSearchHighlight.value = false;
 });
 
-function applySettings(payload: SettingsApplyPayload) {
+async function applySettings(payload: SettingsApplyPayload) {
   const prevCompressBlankKeepOneBlank = compressBlankKeepOneBlank.value;
   const prevChapterMinCharCount = chapterMinCharCount.value;
   monacoSmoothScrolling.value = payload.monacoSmoothScrolling;
@@ -1343,6 +1440,29 @@ function applySettings(payload: SettingsApplyPayload) {
     ),
   );
   ebookConvertOutputDir.value = payload.ebookConvertOutputDir;
+  const prevPortraitCache = characterPortraitCacheDir.value.trim();
+  const nextPortraitCache = payload.characterPortraitCacheDir.trim();
+  if (
+    prevPortraitCache &&
+    nextPortraitCache &&
+    prevPortraitCache !== nextPortraitCache
+  ) {
+    try {
+      const mig = await window.colorTxt.characterPortrait.migrateCacheRoot({
+        from: prevPortraitCache,
+        to: nextPortraitCache,
+      });
+      if (!mig.ok) {
+        await appAlert(mig.error ?? "迁移角色立绘缓存失败，已保留原目录。");
+      } else {
+        characterPortraitCacheDir.value = nextPortraitCache;
+      }
+    } catch (e) {
+      await appAlert(e instanceof Error ? e.message : String(e));
+    }
+  } else {
+    characterPortraitCacheDir.value = nextPortraitCache;
+  }
   const nextFontSize = Math.max(
     minFontSize,
     Math.min(maxFontSize, Math.round(payload.fontSize)),
@@ -1361,6 +1481,7 @@ function applySettings(payload: SettingsApplyPayload) {
     payload.aiSkillsEnabled,
     aiCustomSkills.value.map((s) => s.id),
   );
+  aiAssistantConfigSyncNonce.value += 1;
   persistSettings();
   if (!payload.restoreSessionOnStartup) {
     clearPersistedSession();
@@ -1612,11 +1733,17 @@ useAppShellThemeWatch({
           :current-file-path="currentFile"
           :physical-reader-path="physicalReaderPath"
           :reader-main-ref="readerRef"
+          :ai-assistant-tab-visible="aiFeaturesEnabled"
+          :character-portrait-tab-visible="txt2imgFeatureEnabled"
+          :character-portrait-cache-dir="characterPortraitCacheDir"
+          :character-roster="currentFileCharacterRoster"
+          :character-book-style="currentFileCharacterBookStyle"
           v-model:deep-thinking="aiAssistantDeepThinking"
           v-model:spoiler-safe="aiAssistantSpoilerSafe"
           :ai-skills-enabled="aiSkillsEnabled"
           :ai-skill-overrides="aiSkillOverrides"
           :ai-custom-skills="aiCustomSkills"
+          :ai-assistant-config-sync-nonce="aiAssistantConfigSyncNonce"
           :chapters="chapters"
           :active-chapter-idx="activeChapterIdx"
           :format-char-count="formatCharCount"
@@ -1646,6 +1773,7 @@ useAppShellThemeWatch({
           @jump-to-search-result="onJumpToSearchResult"
           @remove-highlight-term="onRemoveHighlightTerm({ text: $event })"
           @clear-highlights="clearCurrentFileHighlightTerms"
+          @character-file-meta-patch="onCharacterFileMetaPatch"
           @persist-ui="onPersistUi"
           @update:file-category="fileCategory = $event"
           @update:file-sort="fileSort = $event"
@@ -1653,6 +1781,12 @@ useAppShellThemeWatch({
           @set-files-category="onSetFilesCategory"
           @update:fullscreen-file-list-popovers-open="
             fullscreenFileListPopoversOpen = $event
+          "
+          @update:fullscreen-ai-assistant-popovers-open="
+            fullscreenAiAssistantPopoversOpen = $event
+          "
+          @update:fullscreen-character-drawer-open="
+            fullscreenCharacterDrawerOpen = $event
           "
           @update:file-list-editing="fileListEditing = $event"
           @request-expand-panel="showSidebar = true"
@@ -1772,6 +1906,7 @@ useAppShellThemeWatch({
     </div>
 
     <AppDialogHost />
+    <AppToastHost />
 
     <AppOverlays
       ref="appOverlaysRef"
@@ -1810,6 +1945,7 @@ useAppShellThemeWatch({
       :highlight-colors-light="highlightColorsLight"
       :highlight-colors-dark="highlightColorsDark"
       :ebook-convert-output-dir="ebookConvertOutputDir"
+      :character-portrait-cache-dir="characterPortraitCacheDir"
       :ai-skills-enabled="aiSkillsEnabled"
       :ai-skill-overrides="aiSkillOverrides"
       :ai-custom-skills="aiCustomSkills"

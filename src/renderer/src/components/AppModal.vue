@@ -77,61 +77,65 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Transition name="appModal">
-    <div
-      v-if="modelValue"
-      class="appModalBackdrop"
-      data-fullscreen-header-float
-      :style="{ zIndex }"
-      role="dialog"
-      aria-modal="true"
-      :aria-labelledby="title ? titleId : undefined"
-      :aria-label="title ? undefined : '对话框'"
-      @click.self="onMaskClick"
-      @drop.stop.prevent
-    >
+  <Teleport to="body">
+    <Transition name="appModal">
       <div
-        class="appModalPanel"
-        :style="{ maxWidth }"
-        :class="panelClass"
-        @click.stop
+        v-if="modelValue"
+        class="appModalBackdrop"
+        data-fullscreen-header-float
+        :style="{ zIndex }"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="title ? titleId : undefined"
+        :aria-label="title ? undefined : '对话框'"
+        @click.self="onMaskClick"
+        @drop.stop.prevent
       >
         <div
-          v-if="title || showCloseChrome"
-          class="appModalPanelHeader"
-          :class="{
-            'appModalPanelHeader--noTitle': !title,
-            'appModalPanelHeader--noClose': !showCloseChrome,
-          }"
+          class="appModalPanel"
+          :style="{ maxWidth }"
+          :class="panelClass"
+          @click.stop
         >
-          <h2 v-if="title" :id="titleId" class="appModalTitle">{{ title }}</h2>
-          <button
-            v-if="showCloseChrome"
-            type="button"
-            class="appModalClose"
-            aria-label="关闭"
-            title="关闭"
-            @click="close"
+          <div
+            v-if="title || showCloseChrome"
+            class="appModalPanelHeader"
+            :class="{
+              'appModalPanelHeader--noTitle': !title,
+              'appModalPanelHeader--noClose': !showCloseChrome,
+            }"
           >
-            <span
-              class="appModalCloseIcon"
-              aria-hidden="true"
-              v-html="icons.close"
-            />
-          </button>
-        </div>
-        <div
-          class="appModalBody"
-          :class="{ 'appModalBody--noScroll': !bodyScroll }"
-        >
-          <slot />
-        </div>
-        <div v-if="slots.footer" class="appModalFooter">
-          <slot name="footer" />
+            <h2 v-if="title" :id="titleId" class="appModalTitle">
+              {{ title }}
+            </h2>
+            <button
+              v-if="showCloseChrome"
+              type="button"
+              class="appModalClose"
+              aria-label="关闭"
+              title="关闭"
+              @click="close"
+            >
+              <span
+                class="appModalCloseIcon"
+                aria-hidden="true"
+                v-html="icons.close"
+              />
+            </button>
+          </div>
+          <div
+            class="appModalBody"
+            :class="{ 'appModalBody--noScroll': !bodyScroll }"
+          >
+            <slot />
+          </div>
+          <div v-if="slots.footer" class="appModalFooter">
+            <slot name="footer" />
+          </div>
         </div>
       </div>
-    </div>
-  </Transition>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -184,6 +188,7 @@ onBeforeUnmount(() => {
   background: var(--panel);
   border: 1px solid var(--border);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  user-select: none;
 }
 
 .appModalPanelHeader {

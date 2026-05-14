@@ -5,7 +5,6 @@ import {
   ipcMain,
   nativeTheme,
   shell,
-  type MessageBoxOptions,
   type WebContents,
 } from "electron";
 import { createReadStream, watch as fsWatchFile } from "node:fs";
@@ -27,7 +26,12 @@ import { getFonts } from "font-list";
 import iconv from "iconv-lite";
 import jschardet from "jschardet";
 import { EBOOK_DOT_EXTENSIONS } from "@shared/ebookExtensions";
-import { APP_DISPLAY_NAME } from "@shared/packageDerived";
+import type { ColorTxtShowMessageBoxResult } from "@shared/colorTxtShowMessageBox";
+import { parseShowMessageBoxOptions } from "./messageBoxInvoke";
+import {
+  parseShowOpenDialogOptions,
+  parseShowSaveDialogOptions,
+} from "./dialogInvoke";
 import type { CreateMainWindow } from "./windowFactory";
 import { registerLocalFileForColortxtUrl } from "./colortxtLocalProtocol";
 import {
@@ -38,6 +42,10 @@ import {
   validateGlobalShortcut,
 } from "./globalShortcuts";
 import { registerAiIpcHandlers } from "./registerAiIpc";
+import {
+  copyImageToAbsolutePath,
+  migrateCharacterPortraitCacheRoot,
+} from "./characterPortraitFs";
 
 type TxtFileItem = { name: string; path: string; size: number };
 type DirListScanProgress = (item: { name: string; path: string }) => void;
@@ -285,6 +293,32 @@ export function registerMainIpcHandlers(
     shell.showItemInFolder(filePath);
   });
 
+  /** 在系统文件管理器中打开路径（目录会先 `mkdir -p` 再打开） */
+  ipcMain.handle(
+    "shell:openPath",
+    async (
+      _evt,
+      targetPathRaw: unknown,
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const raw =
+        typeof targetPathRaw === "string" ? targetPathRaw.trim() : "";
+      if (!raw) return { ok: false, error: "路径为空" };
+      const resolved = path.resolve(raw);
+      if (!resolved) return { ok: false, error: "路径无效" };
+      try {
+        await mkdir(resolved, { recursive: true });
+      } catch (e) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+      const err = await shell.openPath(resolved);
+      if (err) return { ok: false, error: err };
+      return { ok: true };
+    },
+  );
+
   ipcMain.on("app:quit", () => {
     app.quit();
   });
@@ -318,214 +352,48 @@ export function registerMainIpcHandlers(
     return p;
   });
 
-  ipcMain.handle("dialog:openTxt", async () => {
-    const res = await dialog.showOpenDialog({
-      properties: ["openFile"],
-      filters: [
-        {
-          name: "电子书",
-          extensions: ["txt", "epub", "mobi", "azw3", "fb2", "fbz", "pdf"],
-        },
-      ],
-    });
-    if (res.canceled || res.filePaths.length === 0) return null;
-    return res.filePaths[0];
+  ipcMain.removeHandler("dialog:openTxt");
+  ipcMain.removeHandler("dialog:openFilePlain");
+  ipcMain.removeHandler("dialog:openDirectoryPlain");
+  ipcMain.removeHandler("dialog:openTxtDirectory");
+
+  ipcMain.removeHandler("dialog:showOpenDialog");
+  ipcMain.handle("dialog:showOpenDialog", async (evt, raw: unknown) => {
+    const win = BrowserWindow.fromWebContents(evt.sender);
+    const options = parseShowOpenDialogOptions(raw);
+    return win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
   });
 
-  /** 无类型过滤的单文件选择（路径选择组件 `isDirectory=false`） */
-  ipcMain.handle("dialog:openFilePlain", async () => {
-    const res = await dialog.showOpenDialog({
-      properties: ["openFile"],
-    });
-    if (res.canceled || res.filePaths.length === 0) return null;
-    return res.filePaths[0];
-  });
-
-  ipcMain.handle("dialog:openDirectoryPlain", async () => {
-    const res = await dialog.showOpenDialog({
-      properties: ["openDirectory"],
-    });
-    if (res.canceled || res.filePaths.length === 0) return null;
-    return res.filePaths[0];
-  });
-
-  ipcMain.handle("dialog:openTxtDirectory", async (evt) => {
-    const res = await dialog.showOpenDialog({
-      properties: ["openDirectory", "multiSelections"],
-    });
-    if (res.canceled || res.filePaths.length === 0) return null;
-
-    const dirPaths = res.filePaths;
-    const sender = evt.sender;
-    const byPath = new Map<string, TxtFileItem>();
-
-    for (const dirPath of dirPaths) {
-      sender.send("dir:listTxtFiles:scan", {
-        phase: "start",
-        dirPath,
-      } satisfies { phase: "start"; dirPath: string });
-      const batch = await collectTxtFilesUnderRoot(dirPath, (item) => {
-        sender.send("dir:listTxtFiles:scan", {
-          phase: "progress",
-          name: item.name,
-        } satisfies { phase: "progress"; name: string });
-      });
-      for (const f of batch) {
-        byPath.set(f.path, f);
-      }
-    }
-
-    const files = Array.from(byPath.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, "zh-Hans-CN"),
-    );
-
-    return { dirPaths, files };
+  ipcMain.removeHandler("dialog:showSaveDialog");
+  ipcMain.handle("dialog:showSaveDialog", async (evt, raw: unknown) => {
+    const win = BrowserWindow.fromWebContents(evt.sender);
+    const options = parseShowSaveDialogOptions(raw);
+    return win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options);
   });
 
   ipcMain.removeHandler("dialog:confirmClearRecentFiles");
-  ipcMain.handle("dialog:confirmClearRecentFiles", async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      title: APP_DISPLAY_NAME,
-      buttons: ["取消", "清除"],
-      defaultId: 1,
-      cancelId: 0,
-      message: "是否要清除最近打开的所有文件？",
-      detail: "此操作不可逆！",
-      noLink: true,
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return result.response === 1;
-  });
-
   ipcMain.removeHandler("dialog:confirmClearFileList");
-  ipcMain.handle("dialog:confirmClearFileList", async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      title: APP_DISPLAY_NAME,
-      buttons: ["取消", "清空"],
-      defaultId: 1,
-      cancelId: 0,
-      message: "是否要清空文件列表？",
-      detail: "不会关闭当前正在阅读的文件。",
-      noLink: true,
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return result.response === 1;
-  });
-
   ipcMain.removeHandler("dialog:confirmClearFileListCategory");
-  ipcMain.handle(
-    "dialog:confirmClearFileListCategory",
-    async (evt, payload: { categoryLabel: string; count: number }) => {
-      const win = BrowserWindow.fromWebContents(evt.sender);
-      const label =
-        typeof payload?.categoryLabel === "string" && payload.categoryLabel.trim()
-          ? payload.categoryLabel.trim()
-          : "当前分类";
-      const n =
-        typeof payload?.count === "number" && Number.isFinite(payload.count)
-          ? Math.max(0, Math.floor(payload.count))
-          : 0;
-      const options: MessageBoxOptions = {
-        type: "warning",
-        title: APP_DISPLAY_NAME,
-        buttons: ["取消", "清空分类"],
-        defaultId: 1,
-        cancelId: 0,
-        message: `是否从文件列表中移除「${label}」下的 ${n} 个文件？`,
-        detail: "不会关闭当前正在阅读的文件。",
-        noLink: true,
-      };
-      const result = win
-        ? await dialog.showMessageBox(win, options)
-        : await dialog.showMessageBox(options);
-      return result.response === 1;
-    },
-  );
-
   ipcMain.removeHandler("dialog:confirmClearBookmarks");
-  ipcMain.handle("dialog:confirmClearBookmarks", async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      title: APP_DISPLAY_NAME,
-      buttons: ["取消", "清空"],
-      defaultId: 1,
-      cancelId: 0,
-      message: "是否要清空当前文件的所有书签？",
-      detail: "此操作不可逆！",
-      noLink: true,
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return result.response === 1;
-  });
-
   ipcMain.removeHandler("dialog:confirmClearHighlightTerms");
-  ipcMain.handle("dialog:confirmClearHighlightTerms", async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      title: APP_DISPLAY_NAME,
-      buttons: ["取消", "清空"],
-      defaultId: 1,
-      cancelId: 0,
-      message: "是否要清空当前文件的所有高亮词？",
-      detail: "此操作不可逆！",
-      noLink: true,
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return result.response === 1;
-  });
-
   ipcMain.removeHandler("dialog:confirmClearAppCache");
-  ipcMain.handle("dialog:confirmClearAppCache", async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      title: APP_DISPLAY_NAME,
-      buttons: ["取消", "清除"],
-      defaultId: 1,
-      cancelId: 0,
-      message: "是否清除应用缓存？",
-      detail:
-        "将删除会话、最近打开、文件列表、书签与阅读进度等本地数据；界面设置（字号、主题、配色等）将保留。清除后窗口会重新加载。",
-      noLink: true,
-    };
-    const result = win
-      ? await dialog.showMessageBox(win, options)
-      : await dialog.showMessageBox(options);
-    return result.response === 1;
-  });
-
   ipcMain.removeHandler("dialog:confirmResetUiSettings");
-  ipcMain.handle("dialog:confirmResetUiSettings", async (evt) => {
+
+  ipcMain.removeHandler("dialog:showMessageBox");
+  ipcMain.handle("dialog:showMessageBox", async (evt, raw: unknown) => {
     const win = BrowserWindow.fromWebContents(evt.sender);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      title: APP_DISPLAY_NAME,
-      buttons: ["取消", "恢复默认"],
-      defaultId: 1,
-      cancelId: 0,
-      message: "是否将界面恢复为初始状态？",
-      detail:
-        "将重置所有界面相关的设置（字号、主题、配色等）；会话、文件相关的数据将保留。恢复后窗口会重新加载。",
-      noLink: true,
-    };
+    const options = parseShowMessageBoxOptions(raw);
     const result = win
       ? await dialog.showMessageBox(win, options)
       : await dialog.showMessageBox(options);
-    return result.response === 1;
+    return {
+      response: result.response,
+      checkboxChecked: result.checkboxChecked,
+    } satisfies ColorTxtShowMessageBoxResult;
   });
 
   ipcMain.handle("file:stat", async (_evt, filePath: string) => {
@@ -557,6 +425,30 @@ export function registerMainIpcHandlers(
       return app.getPath(name as Parameters<typeof app.getPath>[0]);
     } catch {
       return null;
+    }
+  });
+
+  /** preload 等不可依赖 `electron.app` 时，由主进程代为 `getPath`（仅白名单键名） */
+  const APP_GET_PATH_SYNC_ALLOW = new Set([
+    "userData",
+    "home",
+    "appData",
+    "temp",
+    "sessionData",
+    "desktop",
+    "documents",
+    "downloads",
+  ]);
+  ipcMain.on("app:getPathSync", (event, nameRaw: unknown) => {
+    try {
+      const key = typeof nameRaw === "string" ? nameRaw.trim() : "";
+      if (!APP_GET_PATH_SYNC_ALLOW.has(key)) {
+        event.returnValue = "";
+        return;
+      }
+      event.returnValue = app.getPath(key as Parameters<typeof app.getPath>[0]);
+    } catch {
+      event.returnValue = "";
     }
   });
 
@@ -643,6 +535,38 @@ export function registerMainIpcHandlers(
           code: err?.code ?? "UNKNOWN",
         };
       }
+    },
+  );
+
+  ipcMain.handle(
+    "characterPortrait:migrateCacheRoot",
+    async (_evt, payloadRaw: unknown) => {
+      if (!payloadRaw || typeof payloadRaw !== "object") {
+        return { ok: false as const, error: "无效参数" };
+      }
+      const o = payloadRaw as Record<string, unknown>;
+      const from = typeof o.from === "string" ? o.from : "";
+      const to = typeof o.to === "string" ? o.to : "";
+      if (!from.trim() || !to.trim()) {
+        return { ok: false as const, error: "无效路径" };
+      }
+      return migrateCharacterPortraitCacheRoot(from, to);
+    },
+  );
+
+  ipcMain.handle(
+    "characterPortrait:copyFileTo",
+    async (_evt, payloadRaw: unknown) => {
+      if (!payloadRaw || typeof payloadRaw !== "object") {
+        return { ok: false as const, error: "无效参数" };
+      }
+      const o = payloadRaw as Record<string, unknown>;
+      const from = typeof o.from === "string" ? o.from : "";
+      const to = typeof o.to === "string" ? o.to : "";
+      if (!from.trim() || !to.trim()) {
+        return { ok: false as const, error: "无效路径" };
+      }
+      return copyImageToAbsolutePath(from, to);
     },
   );
 

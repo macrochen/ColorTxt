@@ -1,15 +1,19 @@
 import type { ChapterMatchRule } from "../chapter";
-import type { FileCategoryDefinition, FileSortMode } from "../constants/fileCategories";
-import { isFileSortMode, parseFileCategoryCatalog } from "../constants/fileCategories";
+import type {
+  FileCategoryDefinition,
+  FileSortMode,
+} from "../constants/fileCategories";
+import {
+  isFileSortMode,
+  parseFileCategoryCatalog,
+} from "../constants/fileCategories";
 import {
   migrateTxtFileListAddedAt,
   type TxtFileItem,
 } from "../services/fileListService";
 
 export type { TxtFileItem };
-import {
-  parseHighlightColorsArray,
-} from "../constants/highlightColors";
+import { parseHighlightColorsArray } from "../constants/highlightColors";
 import {
   parseReaderPaletteOverrides,
   type ReaderSurfacePalette,
@@ -79,7 +83,7 @@ export type PersistedSettingsData = {
   fileCategoryCatalog?: FileCategoryDefinition[];
   /** 监控当前打开文件，磁盘变更后自动重新加载 */
   syncCurrentFile?: boolean;
-  /** 内置 AI 技能开关（键为技能 id，缺省由合并逻辑视为启用） */
+  /** 内置技能开关（键为技能 id，缺省由合并逻辑视为启用） */
   aiSkillsEnabled?: Record<string, boolean>;
   /** 用户对内置技能的描述与提示词覆盖 */
   aiSkillOverrides?: Record<string, AiSkillUserOverride>;
@@ -89,12 +93,19 @@ export type PersistedSettingsData = {
   aiAssistantDeepThinking?: boolean;
   /** AI 阅读助手：防剧透 */
   aiAssistantSpoilerSafe?: boolean;
+  /**
+   * 角色立绘缓存根目录（绝对路径）。
+   * 缺省时运行时使用 `userData/CharacterPortrait`（子目录名见 `@shared/characterPortraitPaths`）。
+   */
+  characterPortraitCacheDir?: string;
 };
 
 export type PersistedSettingsLoadResult = {
   data: PersistedSettingsData;
   /** 持久化 JSON 是否包含 `ebookConvertOutputDir` 且为 string（含空串）；否则用 userData/ConvertedTxt 作为首次默认 */
   ebookConvertOutputDirKeyPresent: boolean;
+  /** 是否包含 `characterPortraitCacheDir` 键（含空串） */
+  characterPortraitCacheDirKeyPresent: boolean;
 };
 
 export type SessionSnapshot = {
@@ -121,9 +132,11 @@ function isTxtFileItemArray(x: unknown): x is TxtFileItem[] {
     const o = item as Record<string, unknown>;
     if (typeof o.path !== "string") return false;
     if (o.addedAt !== undefined) {
-      if (typeof o.addedAt !== "number" || !Number.isFinite(o.addedAt)) return false;
+      if (typeof o.addedAt !== "number" || !Number.isFinite(o.addedAt))
+        return false;
     }
-    if (o.category !== undefined && typeof o.category !== "string") return false;
+    if (o.category !== undefined && typeof o.category !== "string")
+      return false;
     return true;
   });
 }
@@ -138,10 +151,16 @@ export function loadPersistedSettingsData(
   const ebookConvertOutputDirKeyPresent =
     Object.prototype.hasOwnProperty.call(obj, "ebookConvertOutputDir") &&
     typeof obj.ebookConvertOutputDir === "string";
+  const characterPortraitCacheDirKeyPresent =
+    Object.prototype.hasOwnProperty.call(obj, "characterPortraitCacheDir") &&
+    typeof obj.characterPortraitCacheDir === "string";
   const data: PersistedSettingsData = {};
 
   if (obj.theme === "vs" || obj.theme === "vs-dark") data.theme = obj.theme;
-  if (typeof obj.sidebarWidth === "number" && Number.isFinite(obj.sidebarWidth)) {
+  if (
+    typeof obj.sidebarWidth === "number" &&
+    Number.isFinite(obj.sidebarWidth)
+  ) {
     data.sidebarWidth = obj.sidebarWidth;
   }
   if (typeof obj.showSidebar === "boolean") {
@@ -289,7 +308,15 @@ export function loadPersistedSettingsData(
     data.aiAssistantSpoilerSafe = obj.aiAssistantSpoilerSafe;
   }
 
-  return { data, ebookConvertOutputDirKeyPresent };
+  if (typeof obj.characterPortraitCacheDir === "string") {
+    data.characterPortraitCacheDir = obj.characterPortraitCacheDir.trim();
+  }
+
+  return {
+    data,
+    ebookConvertOutputDirKeyPresent,
+    characterPortraitCacheDirKeyPresent,
+  };
 }
 
 export function persistSettingsData(
@@ -317,7 +344,8 @@ export function loadSessionSnapshot(
       ? obj.currentFile
       : null;
   const viewportTopLine =
-    typeof obj.viewportTopLine === "number" && Number.isFinite(obj.viewportTopLine)
+    typeof obj.viewportTopLine === "number" &&
+    Number.isFinite(obj.viewportTopLine)
       ? Math.max(1, Math.floor(obj.viewportTopLine))
       : 1;
   const viewportBottomLine =
@@ -345,7 +373,10 @@ export function persistSessionSnapshot(
   }
 }
 
-export function clearSessionSnapshot(storage: Storage | undefined, key: string) {
+export function clearSessionSnapshot(
+  storage: Storage | undefined,
+  key: string,
+) {
   try {
     storage?.removeItem(key);
   } catch {

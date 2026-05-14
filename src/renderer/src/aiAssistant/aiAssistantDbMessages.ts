@@ -73,7 +73,10 @@ function parsePayloadReasoning(payload: string | null | undefined): string {
 }
 
 /** 旧版持久化把「用户取消了生成」拼进正文；界面另有 aborted 横幅，加载时去掉尾缀以免重复 */
-function stripStoredAssistantAbortMarker(content: string, aborted: boolean): string {
+function stripStoredAssistantAbortMarker(
+  content: string,
+  aborted: boolean,
+): string {
   if (!aborted || !content.trim()) return content;
   return content.replace(/(?:\r?\n)*用户取消了生成\s*$/u, "").trimEnd();
 }
@@ -85,7 +88,10 @@ function stripStoredAssistantAbortMarker(content: string, aborted: boolean): str
  * `aborted === true` 且正文内无「【工具」段时：思考草稿里常有多个 `\n\n`，不得以首个空行当成思考/回答分界，
  * 应将 `【思考】` 后的整段视为推理正文。
  */
-function parseLegacyAssistantPlainBlob(content: string, aborted: boolean): {
+function parseLegacyAssistantPlainBlob(
+  content: string,
+  aborted: boolean,
+): {
   reasoning: string;
   tail: string;
 } {
@@ -265,7 +271,10 @@ export function rowsToUiMessages(rows: DbMsgRow[]): UiMsg[] {
       let answerRaw = r.content;
       let thinkOpen = true;
       if (!reasoningText) {
-        const leg = parseLegacyAssistantPlainBlob(r.content, Boolean(r.aborted));
+        const leg = parseLegacyAssistantPlainBlob(
+          r.content,
+          Boolean(r.aborted),
+        );
         if (leg.reasoning.trim()) {
           reasoningText = leg.reasoning.trim();
           answerRaw = leg.tail;

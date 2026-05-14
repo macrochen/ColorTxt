@@ -107,6 +107,11 @@ function onClick(e: MouseEvent) {
   word-break: break-word;
 }
 
+.aiMarkdown :deep(ul),
+.aiMarkdown :deep(ol) {
+  padding-left: 20px;
+}
+
 .aiMarkdown :deep(p) {
   margin: 0 0 0.6em;
 }

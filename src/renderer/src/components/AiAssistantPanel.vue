@@ -16,7 +16,10 @@ import type { AIAgentRendererEvent } from "@shared/aiTypes";
 import { normalizeAiQuickQuestions } from "@shared/aiTypes";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
 import { collectEnabledAgentSkills } from "@shared/aiSkills";
-import { chunkNovelForAi } from "../utils/aiChunkBook";
+import {
+  isAiVectorIndexAbortError,
+  runAiBookVectorIndexBuild,
+} from "../ai/buildBookVectorIndex";
 import { hashBookBrowser } from "../utils/aiBookHash";
 import {
   getReaderSurroundingPlainText,
@@ -51,6 +54,7 @@ import type {
 import AppCustomSelect, { type CustomSelectItem } from "./AppCustomSelect.vue";
 import { icons } from "../icons";
 import { appAlert } from "../services/appDialog";
+import { appToast } from "../services/appToast";
 
 /** 导出对话下拉菜单固定宽度（与内容版式一致，不作视口/触发器推算） */
 const AI_EXPORT_MENU_WIDTH_PX = 210;
@@ -85,10 +89,14 @@ const props = defineProps<{
   aiSkillsEnabled?: Record<string, boolean>;
   aiSkillOverrides?: Record<string, AiSkillUserOverride>;
   aiCustomSkills?: AiCustomSkill[];
+  /** 设置「确定」保存 AI 配置后递增，用于刷新快速提问与对话模型缓存 */
+  aiConfigSyncNonce?: number;
 }>();
 
 const emit = defineEmits<{
   jumpToChapter: [chapter: Chapter];
+  /** 全屏：历史/导出/模型菜单等 Teleport 打开，用于抑制移出侧栏即收起 */
+  "update:fullscreenAiAssistantPopoversOpen": [open: boolean];
 }>();
 
 const bookHash = ref("");
@@ -154,7 +162,7 @@ function runScrollListToBottomSmooth(
     onComplete();
     return;
   }
-  const durationMs = Math.min(
+  const duration = Math.min(
     AI_CHAT_SMOOTH_SCROLL_MAX_MS,
     Math.max(
       AI_CHAT_SMOOTH_SCROLL_MIN_MS,
@@ -163,7 +171,7 @@ function runScrollListToBottomSmooth(
   );
   const t0 = performance.now();
   const step = (now: number) => {
-    const u = Math.min(1, (now - t0) / durationMs);
+    const u = Math.min(1, (now - t0) / duration);
     const eased = easeOutCubic(u);
     const maxScroll = el.scrollHeight - el.clientHeight;
     el.scrollTop = start + (maxScroll - start) * eased;
@@ -222,6 +230,12 @@ const indexEmbedCurrent = ref(0);
 const indexEmbedTotal = ref(0);
 const indexError = ref("");
 
+/** 分块/向量化/写入索引进行中；`idle` 与 `error` 时可再次发起重建 */
+function isAiVectorIndexPhaseBusy(): boolean {
+  const p = indexPhase.value;
+  return p === "chunking" || p === "embedding" || p === "indexing";
+}
+
 /** 列表展示：末尾追加临时「索引/向量化」消息，随滚动区滚动并在贴底时可见 */
 const messagesForChatView = computed((): UiMsg[] => {
   const base = messages.value;
@@ -261,6 +275,17 @@ const exportDropTop = ref(0);
 const historyDropLeft = ref(0);
 const historyDropTop = ref(0);
 const historyDropWidth = ref(280);
+/** 对话模型 AppCustomSelect 下拉是否展开（全屏侧栏收起抑制） */
+const chatModelPanelOpen = ref(false);
+
+watch(
+  () =>
+    historyOpen.value || exportMenuOpen.value || chatModelPanelOpen.value,
+  (v) => {
+    emit("update:fullscreenAiAssistantPopoversOpen", v);
+  },
+  { immediate: true },
+);
 
 const composerInputRef =
   useTemplateRef<HTMLTextAreaElement>("composerInputRef");
@@ -280,6 +305,11 @@ const currentThreadTitle = computed(() => {
 
 watch(threadId, () => {
   threadTitleEditing.value = false;
+  /** 索引条/错误与会话无关，切换对话时清掉，避免上一会话的失败提示一直挂着 */
+  indexPhase.value = "idle";
+  indexError.value = "";
+  indexEmbedCurrent.value = 0;
+  indexEmbedTotal.value = 0;
 });
 
 function onThreadTitleDblClick() {
@@ -340,7 +370,7 @@ const awaitingAgentDone = ref(false);
 const agentUserAbort = ref(false);
 
 function isAbortLike(e: unknown): boolean {
-  return e instanceof Error && e.name === "AbortError";
+  return isAiVectorIndexAbortError(e);
 }
 
 function abortActiveAiWork(requestId: number) {
@@ -421,7 +451,7 @@ const chatModelScrollItems = computed((): CustomSelectItem[] => {
 
 function truncateModelLabel(raw: string, max = 28): string {
   const s = raw.trim();
-  if (!s) return "选择模型…";
+  if (!s) return "";
   if (s.length <= max) return s;
   return `${s.slice(0, max - 1)}…`;
 }
@@ -439,7 +469,7 @@ const aiQuickQuestionsForUi = computed(() =>
 
 const showAiQuickQuestions = computed(() => {
   if (!hasFile.value) return false;
-  if (indexPhase.value !== "idle") return false;
+  if (isAiVectorIndexPhaseBusy()) return false;
   if (chatAwaitingReply.value || streaming.value) return false;
   if (messages.value.some((m) => m.role === "user" || m.role === "assistant")) {
     return false;
@@ -511,6 +541,7 @@ async function refreshChatModels(opts?: { composerSuccessFlash?: boolean }) {
 }
 
 function onChatModelPanelOpenChange(isOpen: boolean) {
+  chatModelPanelOpen.value = isOpen;
   if (!isOpen || chatModelsLoading.value) return;
   if (chatModelOptions.value.length > 0) return;
   void refreshChatModels();
@@ -530,63 +561,6 @@ function onListScroll() {
   if (!jumpBottomRevealSuppressed.value) {
     showJumpBottom.value = dist > 100;
   }
-}
-
-/** 折叠正文区域的 `.aiFoldContent`（须在聊天列表内） */
-function findAiFoldContentForSelectAll(): HTMLElement | null {
-  const root = listRef.value;
-  if (!root) return null;
-
-  const foldFromNode = (node: Node | null): HTMLElement | null => {
-    if (!node) return null;
-    const start =
-      node.nodeType === Node.ELEMENT_NODE
-        ? (node as Element)
-        : node.parentElement;
-    const c = start?.closest(".aiFoldContent");
-    return c instanceof HTMLElement && root.contains(c) ? c : null;
-  };
-
-  const ae = document.activeElement;
-  if (ae instanceof HTMLElement) {
-    const f = foldFromNode(ae);
-    if (f) return f;
-  }
-
-  const sel = window.getSelection();
-  if (sel?.rangeCount) return foldFromNode(sel.anchorNode);
-
-  return null;
-}
-
-/**
- * 点击 `pre` 内文字时常只移动选区、焦点仍在阅读器等控件上，按键不会进 `aiList`。
- * 在 window 捕获阶段根据「焦点或选区锚点」是否在折叠内容内拦截 Ctrl/Cmd+A。
- */
-function onWindowCaptureAiFoldSelectAll(ev: KeyboardEvent) {
-  if (ev.key !== "a" && ev.key !== "A") return;
-  if (!ev.ctrlKey && !ev.metaKey) return;
-  if (ev.altKey) return;
-
-  const root = listRef.value;
-  if (!root) return;
-
-  const ae = document.activeElement;
-  if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
-    if (root.contains(ae)) return;
-  }
-
-  const content = findAiFoldContentForSelectAll();
-  if (!content) return;
-
-  ev.preventDefault();
-  ev.stopImmediatePropagation();
-  const range = document.createRange();
-  range.selectNodeContents(content);
-  const sel = window.getSelection();
-  if (!sel) return;
-  sel.removeAllRanges();
-  sel.addRange(range);
 }
 
 async function refreshBookHash() {
@@ -642,16 +616,22 @@ async function loadMessagesForThread(tid: string) {
 
 async function ensureThread() {
   if (!bookHash.value) return;
+  const bh = bookHash.value;
   await loadThreadList();
+
   if (threads.value.length === 0) {
-    const id = await window.colorTxt.ai.threadCreate(bookHash.value, "新对话");
+    await window.colorTxt.ai.threadDeleteEmptyForBook(bh);
+    const id = await window.colorTxt.ai.threadCreate(bh, "新对话");
     threadId.value = id;
+  } else {
+    await window.colorTxt.ai.threadDeleteEmptyForBook(bh, threadId.value);
     await loadThreadList();
-  } else if (
-    !threadId.value ||
-    !threads.value.some((t) => t.id === threadId.value)
-  ) {
-    threadId.value = threads.value[0]!.id;
+    if (!threadId.value) {
+      threadId.value = threads.value[0]!.id;
+    } else if (!threads.value.some((t) => t.id === threadId.value)) {
+      const rows = await window.colorTxt.ai.messageList(threadId.value);
+      if (rows.length > 0) threadId.value = threads.value[0]!.id;
+    }
   }
   if (threadId.value) await loadMessagesForThread(threadId.value);
 }
@@ -686,6 +666,14 @@ watch(
     });
   },
   { immediate: true },
+);
+
+watch(
+  () => props.aiConfigSyncNonce ?? 0,
+  (n) => {
+    if (n <= 0) return;
+    void syncChatModelFromConfig();
+  },
 );
 
 function scrollToBottom(behavior: ScrollBehavior = "auto") {
@@ -776,7 +764,6 @@ watch(
 );
 
 onMounted(() => {
-  window.addEventListener("keydown", onWindowCaptureAiFoldSelectAll, true);
   document.addEventListener("pointerdown", onHistoryDocPointerDown);
   document.addEventListener("keydown", onHistoryDocKeydown, true);
   window.addEventListener("resize", onHistoryWindowResize);
@@ -879,7 +866,6 @@ onBeforeUnmount(() => {
     composerPullModelsSuccessTimer = null;
   }
   endJumpBottomSmoothScrollTracking(false);
-  window.removeEventListener("keydown", onWindowCaptureAiFoldSelectAll, true);
   document.removeEventListener("pointerdown", onHistoryDocPointerDown);
   document.removeEventListener("keydown", onHistoryDocKeydown, true);
   window.removeEventListener("resize", onHistoryWindowResize);
@@ -888,6 +874,46 @@ onBeforeUnmount(() => {
     onStop();
   }
 });
+
+/** 侧栏 header「更多 → 重建向量索引」；与首次发送前的建索共用 buildIndex 与 indexPhase 展示 */
+async function requestRebuildVectorIndex(): Promise<void> {
+  const cfg = await window.colorTxt.ai.configGet();
+  if (!cfg.embeddingEnabled) {
+    await appAlert(
+      "请先在「设置」→「向量模型」中启用向量模型并配置嵌入接口，再构建索引。",
+    );
+    return;
+  }
+  if (!bookHash.value || !props.readerMainRef?.getAllText?.()) {
+    await appAlert("请先打开一本书。");
+    return;
+  }
+  if (isAiVectorIndexPhaseBusy()) {
+    appToast("索引任务正在进行中，请稍候。", {
+      kind: "primary",
+    });
+    return;
+  }
+  if (chatAwaitingReply.value || streaming.value) {
+    await appAlert("对话进行中，请先停止或等待完成后再重建索引。");
+    return;
+  }
+  activeRequestId.value += 1;
+  const requestId = activeRequestId.value;
+  const ac = new AbortController();
+  try {
+    const success = await buildIndex(ac.signal, requestId);
+    if (!success && !ac.signal.aborted && !indexError.value.trim()) {
+      indexPhase.value = "error";
+      indexError.value = "索引未完成。";
+    }
+    /** 失败文案已由 `indexBanner`（phase=error）展示，不再 `appAlert`，避免与聊天区重复 */
+  } catch (e) {
+    if (isAiVectorIndexAbortError(e) || ac.signal.aborted) return;
+    indexPhase.value = "error";
+    indexError.value = e instanceof Error ? e.message : String(e);
+  }
+}
 
 async function buildIndex(
   signal: AbortSignal,
@@ -899,74 +925,36 @@ async function buildIndex(
     e.name = "AbortError";
     throw e;
   }
-  indexError.value = "";
-  const cfg = await window.colorTxt.ai.configGet();
-  const full = props.readerMainRef.getAllText();
-  indexPhase.value = "chunking";
-  const drafts = chunkNovelForAi({
-    fullText: full,
-    chapters: props.chapters,
-    bookHash: bookHash.value,
-    targetTokens: cfg.chunkTargetTokens,
-    minTokens: cfg.chunkMinTokens,
-    overlapRatio: cfg.chunkOverlapRatio,
-  });
-  if (signal.aborted) {
-    const e = new Error("Aborted");
-    e.name = "AbortError";
-    throw e;
-  }
-  const texts = drafts.map((d) => d.content);
-  indexPhase.value = "embedding";
-  indexEmbedTotal.value = Math.max(1, Math.ceil(texts.length / 20));
-  indexEmbedCurrent.value = 0;
-  const allEmb: number[][] = [];
-  try {
-    for (let i = 0; i < texts.length; i += 20) {
-      if (signal.aborted) {
-        const e = new Error("Aborted");
-        e.name = "AbortError";
-        throw e;
-      }
-      const batch = texts.slice(i, i + 20);
-      const emb = await window.colorTxt.ai.embed(batch, requestId);
-      allEmb.push(...emb);
-      indexEmbedCurrent.value = Math.min(
-        indexEmbedTotal.value,
-        indexEmbedCurrent.value + 1,
-      );
-    }
-    if (signal.aborted) {
-      const e = new Error("Aborted");
-      e.name = "AbortError";
-      throw e;
-    }
-    indexPhase.value = "indexing";
-    const records = drafts.map((d, j) => ({
-      ...d,
-      embedding: allEmb[j]!,
-    }));
-    const r = await window.colorTxt.ai.indexReplaceChunks(
-      bookHash.value,
-      records,
-    );
-    if (!r.ok) {
-      indexPhase.value = "error";
-      indexError.value = r.error ?? "索引写入失败";
-      return false;
-    }
-    indexPhase.value = "idle";
-    return true;
-  } catch (e) {
-    if (signal.aborted || isAbortLike(e)) {
-      indexPhase.value = "idle";
+  const hooks = {
+    onPhase: (p: "chunking" | "embedding" | "indexing") => {
+      indexPhase.value = p;
+    },
+    onEmbedProgress: (cur: number, tot: number) => {
+      indexEmbedTotal.value = tot;
+      indexEmbedCurrent.value = cur;
+    },
+    clearError: () => {
       indexError.value = "";
-      throw e;
-    }
-    indexPhase.value = "error";
-    indexError.value = e instanceof Error ? e.message : String(e);
-    return false;
-  }
+    },
+    setError: (m: string) => {
+      indexError.value = m;
+    },
+    setPhaseIdle: () => {
+      indexPhase.value = "idle";
+    },
+    setPhaseError: () => {
+      indexPhase.value = "error";
+    },
+  };
+  return runAiBookVectorIndexBuild({
+    signal,
+    embedRequestId: requestId,
+    bookHash: bookHash.value,
+    fullText: props.readerMainRef.getAllText(),
+    chapters: props.chapters,
+    hooks,
+    abortMode: "throw",
+  });
 }
 
 async function ensureIndexed(
@@ -1054,7 +1042,10 @@ async function onSend() {
 
   input.value = "";
   void nextTick(() => autosizeComposerInput());
+  /** 首条用户消息一落库就立刻按问题命名，不必等 Agent 结束（done 里仍会再调一次，已改名则 no-op） */
+  const priorUserCount = messages.value.filter((m) => m.role === "user").length;
   const uid = await window.colorTxt.ai.messageAppend(tid, "user", text);
+  if (priorUserCount === 0) void maybeRenameThreadFromFirstExchange(tid);
   const userTs = Date.now();
   messages.value.push({
     id: uid,
@@ -1104,6 +1095,9 @@ async function onSend() {
         last.agentLive = false;
         finalizeLiveThinkingAfterStop(last);
       }
+      /** 错误已写入助手气泡，收起索引条，避免与气泡内「索引失败：…」双条重复 */
+      indexPhase.value = "idle";
+      indexError.value = "";
       return;
     }
 
@@ -1222,11 +1216,16 @@ async function onNewChat() {
     abortActiveAiWork(activeRequestId.value);
     chatAwaitingReply.value = false;
   }
+  const prevId = threadId.value;
   const id = await window.colorTxt.ai.threadCreate(bookHash.value, "新对话");
   threadId.value = id;
   messages.value = [];
   showJumpBottom.value = false;
   listStickBottom.value = true;
+  if (prevId && prevId !== id) {
+    const prevRows = await window.colorTxt.ai.messageList(prevId);
+    if (prevRows.length === 0) await window.colorTxt.ai.threadDelete(prevId);
+  }
   await nextTick();
   const listEl = listRef.value;
   if (listEl) listEl.scrollTop = 0;
@@ -1521,6 +1520,10 @@ function onKeydown(e: KeyboardEvent) {
     void onSend();
   }
 }
+
+defineExpose({
+  requestRebuildVectorIndex,
+});
 </script>
 
 <template>
@@ -1531,8 +1534,8 @@ function onKeydown(e: KeyboardEvent) {
           ref="historyBtnRef"
           type="button"
           class="aiActivityLikeBtn"
-          title="历史会话"
-          aria-label="历史会话"
+          title="历史对话"
+          aria-label="历史对话"
           aria-haspopup="listbox"
           :aria-expanded="historyOpen"
           @click="toggleHistoryDropdown"
@@ -1644,7 +1647,7 @@ function onKeydown(e: KeyboardEvent) {
               </li>
             </template>
           </ul>
-          <p v-else class="aiHistoryDropdownEmpty">暂无历史会话</p>
+          <p v-else class="aiHistoryDropdownEmpty">暂无对话记录</p>
         </div>
       </Teleport>
 
@@ -1776,6 +1779,7 @@ function onKeydown(e: KeyboardEvent) {
                   class="aiModelPick"
                   :model-value="activeChatModel"
                   :display-label="chatModelDisplayLabel"
+                  placeholder="选择模型…"
                   :fixed-top-items="chatModelFixedTopItems"
                   :scroll-items="chatModelScrollItems"
                   :fixed-bottom-items="selectListsEmpty"
@@ -2114,7 +2118,6 @@ function onKeydown(e: KeyboardEvent) {
   max-height: 168px;
   overflow-x: hidden;
   overflow-y: hidden;
-  resize: none;
   padding: 6px 4px 0;
   border: none;
   border-radius: 8px;
@@ -2169,39 +2172,6 @@ function onKeydown(e: KeyboardEvent) {
   gap: 8px;
   padding: 0 2px;
   min-width: 0;
-}
-
-.aiPillToggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.aiPillToggle:hover {
-  background: var(--icon-btn-bg-hover);
-}
-
-.aiPillToggle--on {
-  color: var(--fg);
-  background: var(--icon-btn-bg-active);
-}
-
-.aiPillToggle__icon :deep(svg) {
-  width: 16px;
-  height: 16px;
-}
-
-.aiPillToggle__icon :deep(svg path) {
-  fill: currentColor;
 }
 
 .aiComposerActionBtn {

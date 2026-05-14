@@ -4,11 +4,17 @@ export type SettingsTabId =
   | "reading"
   | "ai"
   | "vectorModel"
+  | "txt2img"
   | "skills";
 
-defineProps<{
-  activeTab: SettingsTabId;
-}>();
+withDefaults(
+  defineProps<{
+    activeTab: SettingsTabId;
+    /** false 时隐藏依赖 AI 总开关的子标签（向量模型 / 文生图 / 技能） */
+    showAiExtensionTabs?: boolean;
+  }>(),
+  { showAiExtensionTabs: true },
+);
 
 const emit = defineEmits<{
   "update:activeTab": [value: SettingsTabId];
@@ -46,9 +52,10 @@ const emit = defineEmits<{
         :aria-selected="activeTab === 'ai'"
         @click="emit('update:activeTab', 'ai')"
       >
-        AI
+        AI 阅读助手
       </button>
       <button
+        v-show="showAiExtensionTabs"
         type="button"
         role="tab"
         class="tabBtn"
@@ -59,6 +66,18 @@ const emit = defineEmits<{
         向量模型
       </button>
       <button
+        v-show="showAiExtensionTabs"
+        type="button"
+        role="tab"
+        class="tabBtn"
+        :class="{ active: activeTab === 'txt2img' }"
+        :aria-selected="activeTab === 'txt2img'"
+        @click="emit('update:activeTab', 'txt2img')"
+      >
+        角色卡
+      </button>
+      <button
+        v-show="showAiExtensionTabs"
         type="button"
         role="tab"
         class="tabBtn"

@@ -1,19 +1,27 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue";
+import { onBeforeUnmount, watch } from "vue";
+import { pushEscBeforeModal } from "../utils/modalStack";
 
 const src = defineModel<string>({ default: "" });
 
-function onDocKeydown(ev: KeyboardEvent) {
-  if (ev.key !== "Escape" || !src.value) return;
-  ev.preventDefault();
-  src.value = "";
-}
+let removeEscBefore: (() => void) | null = null;
 
-onMounted(() => {
-  document.addEventListener("keydown", onDocKeydown);
-});
+watch(
+  src,
+  (v) => {
+    removeEscBefore?.();
+    removeEscBefore = null;
+    if (!v) return;
+    removeEscBefore = pushEscBeforeModal(() => {
+      src.value = "";
+    });
+  },
+  { immediate: true },
+);
+
 onBeforeUnmount(() => {
-  document.removeEventListener("keydown", onDocKeydown);
+  removeEscBefore?.();
+  removeEscBefore = null;
 });
 </script>
 

@@ -23,6 +23,7 @@ import {
   persistTxtFileListSnapshot,
   type TxtFileItem,
 } from "../stores/cacheStore";
+import { defaultCharacterPortraitCacheRoot } from "@shared/characterPortraitPaths";
 import type {
   FileCategoryDefinition,
   FileSortMode,
@@ -77,12 +78,14 @@ import {
   sessionKey,
   skipSettingsPersistenceSessionKey,
   skipUnloadPersistenceSessionKey,
+  APP_DISPLAY_NAME,
   type ReaderSurfacePalette,
 } from "../constants/appUi";
 import { EBOOK_CONVERT_DEFAULT_SUBDIR } from "@shared/ebookConvertPaths";
 import type { ShortcutBindingMap } from "../services/shortcutRegistry";
 import { mergeShortcutBindings } from "../services/shortcutUtils";
 import { joinFs } from "../ebook/pathUtils";
+import { resolveDefaultEbookConvertOutputDirSync } from "../utils/defaultCacheDirs";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
 import {
   mergeAiCustomSkills,
@@ -90,17 +93,10 @@ import {
   mergeAiSkillsEnabled,
 } from "@shared/aiSkills";
 
-/** 同步 preload 路径偶发不可用（如极早时机）时用主进程 IPC 兜底，避免首次把空目录写入设置后永久固化 */
+/** 同步路径优先；仍为空时用主进程 IPC（极早启动 preload 未就绪等） */
 async function resolveDefaultEbookConvertOutputDir(): Promise<string> {
-  try {
-    const p = window.colorTxt?.getDefaultEbookConvertOutputDir?.();
-    if (typeof p === "string") {
-      const t = p.trim();
-      if (t) return t;
-    }
-  } catch {
-    // ignore
-  }
+  const sync = resolveDefaultEbookConvertOutputDirSync();
+  if (sync) return sync;
   try {
     const q = await window.colorTxt?.getPath?.("userData");
     if (typeof q === "string") {
@@ -159,6 +155,8 @@ export function useAppPersistence(deps: {
   highlightColorsDark: Ref<string[]>;
   /** 电子书转换输出目录；空字符串表示与源文件同目录；无持久化键时默认 userData/ConvertedTxt */
   ebookConvertOutputDir: Ref<string>;
+  /** 角色立绘缓存根目录（绝对路径）；无键时默认 userData/CharacterPortrait */
+  characterPortraitCacheDir: Ref<string>;
   fileCategory: Ref<string>;
   fileSort: Ref<FileSortMode>;
   fileCategoryCatalog: Ref<FileCategoryDefinition[]>;
@@ -166,7 +164,7 @@ export function useAppPersistence(deps: {
   fileListEditing: Ref<boolean>;
   /** 监控当前打开文件，磁盘变更后自动重新加载 */
   syncCurrentFile: Ref<boolean>;
-  /** 内置 AI 技能启用状态 */
+  /** 内置技能启用状态 */
   aiSkillsEnabled: Ref<Record<string, boolean>>;
   aiSkillOverrides: Ref<Record<string, AiSkillUserOverride>>;
   aiCustomSkills: Ref<AiCustomSkill[]>;
@@ -560,23 +558,40 @@ export function useAppPersistence(deps: {
   }
 
   async function clearRecentFiles() {
-    const confirmed = await window.colorTxt.confirmClearRecentFiles();
-    if (!confirmed) return;
+    const r = await window.colorTxt.showMessageBox({
+      type: "warning",
+      title: APP_DISPLAY_NAME,
+      buttons: ["取消", "清除"],
+      defaultId: 1,
+      cancelId: 0,
+      message: "是否要清除最近打开的所有文件？",
+      detail: "此操作不可逆！",
+      noLink: true,
+    });
+    if (r.response !== 1) return;
     deps.recentFiles.value = [];
     persistRecentFiles();
   }
 
   function loadPersistedSettings(): {
     ebookConvertOutputDirKeyPresent: boolean;
+    characterPortraitCacheDirKeyPresent: boolean;
   } {
     const loaded = loadPersistedSettingsData(
       typeof window !== "undefined" ? window.localStorage : undefined,
       persistKey,
     );
     if (!loaded) {
-      return { ebookConvertOutputDirKeyPresent: false };
+      return {
+        ebookConvertOutputDirKeyPresent: false,
+        characterPortraitCacheDirKeyPresent: false,
+      };
     }
-    const { data, ebookConvertOutputDirKeyPresent } = loaded;
+    const {
+      data,
+      ebookConvertOutputDirKeyPresent,
+      characterPortraitCacheDirKeyPresent,
+    } = loaded;
 
     if (data.theme) deps.currentTheme.value = data.theme;
 
@@ -725,6 +740,11 @@ export function useAppPersistence(deps: {
       deps.ebookConvertOutputDir.value = data.ebookConvertOutputDir;
     }
 
+    if (typeof data.characterPortraitCacheDir === "string") {
+      deps.characterPortraitCacheDir.value =
+        data.characterPortraitCacheDir.trim();
+    }
+
     deps.fileCategory.value = normalizeCategoryFilter(data.fileCategory);
     deps.fileSort.value = isFileSortMode(data.fileSort)
       ? data.fileSort
@@ -755,7 +775,10 @@ export function useAppPersistence(deps: {
       deps.aiAssistantSpoilerSafe.value = data.aiAssistantSpoilerSafe;
     }
 
-    return { ebookConvertOutputDirKeyPresent };
+    return {
+      ebookConvertOutputDirKeyPresent,
+      characterPortraitCacheDirKeyPresent,
+    };
   }
 
   function persistSettings() {
@@ -809,6 +832,7 @@ export function useAppPersistence(deps: {
         DEFAULT_HIGHLIGHT_COLORS_DARK,
       ),
       ebookConvertOutputDir: deps.ebookConvertOutputDir.value,
+      characterPortraitCacheDir: deps.characterPortraitCacheDir.value.trim(),
       fileCategory: deps.fileCategory.value,
       fileSort: deps.fileSort.value,
       fileCategoryCatalog: deps.fileCategoryCatalog.value,
@@ -874,8 +898,12 @@ export function useAppPersistence(deps: {
     } catch {
       // ignore
     }
-    const { ebookConvertOutputDirKeyPresent } = loadPersistedSettings();
+    const {
+      ebookConvertOutputDirKeyPresent,
+      characterPortraitCacheDirKeyPresent,
+    } = loadPersistedSettings();
     settingsLoaded.value = true;
+    let needDefaultSettingsPersist = false;
     if (!ebookConvertOutputDirKeyPresent) {
       try {
         const ud = await resolveDefaultEbookConvertOutputDir();
@@ -883,6 +911,21 @@ export function useAppPersistence(deps: {
       } catch {
         // ignore
       }
+      needDefaultSettingsPersist = true;
+    }
+    if (!characterPortraitCacheDirKeyPresent) {
+      try {
+        const ud = await window.colorTxt.getPath("userData");
+        if (ud) {
+          deps.characterPortraitCacheDir.value =
+            defaultCharacterPortraitCacheRoot(ud);
+        }
+      } catch {
+        // ignore
+      }
+      needDefaultSettingsPersist = true;
+    }
+    if (needDefaultSettingsPersist) {
       persistSettings();
     }
     loadRecentFiles();
