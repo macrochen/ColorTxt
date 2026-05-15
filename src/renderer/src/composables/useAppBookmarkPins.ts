@@ -3,6 +3,7 @@ import type ReaderMain from "../components/ReaderMain.vue";
 import type { Chapter } from "../chapter";
 import { APP_DISPLAY_NAME } from "../constants/appUi";
 import { pickActiveChapterIdx } from "../reader/chapterIndex";
+import { appToast } from "../services/appToast";
 import {
   findFileMetaRecord,
   type FileBookmarkItem,
@@ -47,12 +48,17 @@ export function useAppBookmarkPins(deps: {
   const bookmarkNoteInput = ref("");
   const bookmarkNoteInputRef = ref<HTMLTextAreaElement | null>(null);
   const editingBookmarkLine = ref<number | null>(null);
+  /** 编辑书签时「更新为当前行」暂存的行号；仅点「保存」写入 meta，关弹窗或取消则清除。 */
+  const stagedEditingBookmarkLine = ref<number | null>(null);
 
   watch(deps.currentFile, () => {
     pinnedScrollTop.value = null;
   });
   watch(addBookmarkOpen, async (open) => {
-    if (!open) return;
+    if (!open) {
+      stagedEditingBookmarkLine.value = null;
+      return;
+    }
     await nextTick();
     const el = bookmarkNoteInputRef.value;
     if (!el) return;
@@ -184,14 +190,14 @@ export function useAppBookmarkPins(deps: {
       return;
     }
     editingBookmarkLine.value = null;
+    stagedEditingBookmarkLine.value = null;
     bookmarkNoteInput.value = deps.readerRef.value?.getSelectedText?.() ?? "";
     addBookmarkOpen.value = true;
     removeBookmarkOpen.value = false;
   }
 
-  /** 添加/编辑书签弹窗与 `confirmAddBookmark` 使用的行号（阅读模式为物理行，编辑模式为显示行）。 */
-  function getPendingBookmarkSaveLine(): number {
-    if (editingBookmarkLine.value != null) return editingBookmarkLine.value;
+  /** 当前视口锚点行（与新建书签写入行一致）：锚点显示行 → 物理/显示行；无锚点时回退视口顶行。 */
+  function resolveViewportBookmarkAnchorLine(): number {
     const anchor =
       deps.readerRef.value?.getBookmarkSaveAnchorDisplayLine?.() ?? null;
     if (typeof anchor === "number" && Number.isFinite(anchor)) {
@@ -203,12 +209,23 @@ export function useAppBookmarkPins(deps: {
     return viewportTopPhysicalLine.value;
   }
 
+  /** 添加/编辑书签弹窗与 `confirmAddBookmark` 使用的行号（阅读模式为物理行，编辑模式为显示行）。 */
+  function getPendingBookmarkSaveLine(): number {
+    if (editingBookmarkLine.value != null) {
+      return (
+        stagedEditingBookmarkLine.value ?? editingBookmarkLine.value
+      );
+    }
+    return resolveViewportBookmarkAnchorLine();
+  }
+
   const addBookmarkDialogPreview = computed(() => {
     if (!addBookmarkOpen.value) return null;
     void deps.totalLineCount.value;
     void deps.lastProbeLine.value;
     void deps.chapters.value;
     void deps.readerEditMode.value;
+    void stagedEditingBookmarkLine.value;
     const line = getPendingBookmarkSaveLine();
     return {
       chapterTitle: resolveBookmarkChapterTitle(line),
@@ -219,12 +236,49 @@ export function useAppBookmarkPins(deps: {
   function confirmAddBookmark() {
     const path = deps.currentFile.value;
     if (!path) return;
+    const origEditLine = editingBookmarkLine.value;
     const line = getPendingBookmarkSaveLine();
     const note = bookmarkNoteInput.value.replace(/\r?\n/g, " ").trim();
-    deps.upsertBookmark(path, line, note);
+    if (origEditLine != null) {
+      if (line !== origEditLine) {
+        if (
+          currentFileBookmarks.value.some(
+            (it) => it.line === line && it.line !== origEditLine,
+          )
+        ) {
+          appToast("目标行已有书签，请先移除或更换阅读位置", {
+            kind: "warning",
+          });
+          return;
+        }
+        deps.removeBookmark(path, origEditLine);
+      }
+      deps.upsertBookmark(path, line, note);
+    } else {
+      deps.upsertBookmark(path, line, note);
+    }
     editingBookmarkLine.value = null;
+    stagedEditingBookmarkLine.value = null;
     addBookmarkOpen.value = false;
     if (deps.sidebarTab.value === "bookmarks") deps.pulseBookmarkListCenter();
+  }
+
+  /** 编辑书签：仅暂存当前视口锚点行；与备注一并于「保存」写入；「取消」关弹窗会清暂存。 */
+  function updateEditingBookmarkToCurrentViewportLine() {
+    const origLine = editingBookmarkLine.value;
+    if (origLine == null || !canBookmark.value) return;
+    const newLine = resolveViewportBookmarkAnchorLine();
+    const effectiveBefore = stagedEditingBookmarkLine.value ?? origLine;
+    if (newLine === effectiveBefore) return;
+    if (
+      currentFileBookmarks.value.some(
+        (it) => it.line === newLine && it.line !== origLine,
+      )
+    ) {
+      appToast("目标行已有书签，请先移除或更换阅读位置", { kind: "warning" });
+      return;
+    }
+    stagedEditingBookmarkLine.value = newLine;
   }
 
   function confirmRemoveActiveBookmark() {
@@ -270,6 +324,7 @@ export function useAppBookmarkPins(deps: {
   function onEditBookmark(line: number) {
     const item = currentFileBookmarks.value.find((it) => it.line === line);
     editingBookmarkLine.value = line;
+    stagedEditingBookmarkLine.value = null;
     bookmarkNoteInput.value = item?.note ?? "";
     addBookmarkOpen.value = true;
     removeBookmarkOpen.value = false;
@@ -304,6 +359,7 @@ export function useAppBookmarkPins(deps: {
     onGoBackFromPin,
     onBookmarkClick,
     confirmAddBookmark,
+    updateEditingBookmarkToCurrentViewportLine,
     confirmRemoveActiveBookmark,
     jumpToBookmark,
     clearCurrentFileBookmarks,

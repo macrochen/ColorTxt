@@ -910,6 +910,7 @@ const {
   onGoBackFromPin,
   onBookmarkClick,
   confirmAddBookmark,
+  updateEditingBookmarkToCurrentViewportLine,
   confirmRemoveActiveBookmark,
   jumpToBookmark,
   clearCurrentFileBookmarks,
@@ -2099,6 +2100,7 @@ useAppShellThemeWatch({
       :chapter-rules="chapterRuleState.rules"
       :chapter-rule-error-text="chapterRuleErrorText"
       :editing-bookmark-line="editingBookmarkLine"
+      :can-bookmark="canBookmark"
       :add-bookmark-dialog-preview="addBookmarkDialogPreview"
       :active-bookmark-in-viewport="activeBookmarkInViewport"
       :dir-list-scanning="dirListScanning"
@@ -2121,6 +2123,9 @@ useAppShellThemeWatch({
       @apply-shortcut-bindings="applyShortcutBindings"
       @apply-chapter-rules="applyChapterMatchRules"
       @confirm-add-bookmark="confirmAddBookmark"
+      @update-bookmark-to-current-viewport-line="
+        updateEditingBookmarkToCurrentViewportLine
+      "
       @confirm-remove-active-bookmark="confirmRemoveActiveBookmark"
       @apply-reader-palettes="onApplyReaderPalettes"
       @apply-highlight-colors="onApplyHighlightColors"

@@ -39,6 +39,8 @@ const props = defineProps<{
   chapterRules: ChapterMatchRule[];
   chapterRuleErrorText: string;
   editingBookmarkLine: number | null;
+  /** 编辑书签时「更新为当前行」是否可用（与顶栏书签一致：有文件、非加载、有正文行） */
+  canBookmark: boolean;
   /** 添加/编辑书签弹窗：在备注框上方展示的章节名与正文预览（与侧栏书签列表逻辑一致） */
   addBookmarkDialogPreview: {
     chapterTitle?: string;
@@ -67,6 +69,7 @@ const emit = defineEmits<{
   applySettings: [payload: SettingsApplyPayload];
   applyChapterRules: [payload: { rules: ChapterMatchRule[] }];
   confirmAddBookmark: [];
+  updateBookmarkToCurrentViewportLine: [];
   confirmRemoveActiveBookmark: [];
   applyShortcutBindings: [payload: ShortcutBindingMap];
   applyReaderPalettes: [
@@ -242,16 +245,30 @@ onBeforeUnmount(() => {
     </div>
     <template #footer>
       <div class="bookmarkModalFooter">
-        <button class="btn" size="large" @click="addBookmarkOpen = false">
-          取消
-        </button>
-        <button
-          class="btn primary"
-          size="large"
-          @click="emit('confirmAddBookmark')"
-        >
-          {{ editingBookmarkLine == null ? "添加" : "保存" }}
-        </button>
+        <div class="bookmarkModalFooterStart">
+          <button
+            v-if="editingBookmarkLine != null"
+            type="button"
+            class="btn"
+            size="large"
+            :disabled="!canBookmark"
+            @click="emit('updateBookmarkToCurrentViewportLine')"
+          >
+            更新为当前行
+          </button>
+        </div>
+        <div class="bookmarkModalFooterEnd">
+          <button class="btn" size="large" @click="addBookmarkOpen = false">
+            取消
+          </button>
+          <button
+            class="btn primary"
+            size="large"
+            @click="emit('confirmAddBookmark')"
+          >
+            {{ editingBookmarkLine == null ? "添加" : "保存" }}
+          </button>
+        </div>
       </div>
     </template>
   </AppModal>
@@ -393,7 +410,18 @@ onBeforeUnmount(() => {
 
 .bookmarkModalFooter {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.bookmarkModalFooterEnd {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
 }
 </style>
