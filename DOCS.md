@@ -161,7 +161,7 @@ src/
 │       ├── assets/           # 字体与静态图标
 │       ├── components/       # Vue 组件（见下文组件表）
 │       ├── composables/      # 根级组合式职责拆分（见补充说明）
-│       │   ├── useAppBookmarkPins.ts      # 书钉与书签
+│       │   ├── useAppBookmarkPins.ts      # 书钉与书签（行号锚点、章节名、弹窗预览、Teleport 菜单等，见 DOCS「书签」）
 │       │   ├── useAppChapterListSync.ts   # 列表「滚到当前」同步一拍
 │       │   ├── useAppChapterNavigation.ts # 章节跳转与规则联动
 │       │   ├── useAppFileSession.ts       # 打开/目录/会话与流管道
@@ -329,7 +329,7 @@ src/
 
 ###### `composables/`
 
-- **`useAppBookmarkPins.ts`**：书钉与书签：列表项、视口内活动书签、添加/移除/跳转及书签弹窗交互；**`readerEditMode`** 下书签跳转与视口判定按物理行 = Monaco 行（不经滤空映射）。
+- **`useAppBookmarkPins.ts`**：书钉与书签：列表项、视口内活动书签、添加/移除/跳转及书签弹窗交互；**`readerEditMode`** 下书签跳转与视口判定按物理行 = Monaco 行（不经滤空映射）。**章节名**（侧栏列表与添加/编辑弹窗预览）用当前 **`chapters`** 与 **`reader/chapterIndex`** 的 `pickActiveChapterIdx` 推断；**持久化行号**、**锚点行**、**弹窗预览**、**右键菜单 Teleport** 等见下文 **「书签（行号语义、侧栏与弹窗）」**。
 - **`useAppChapterListSync.ts`**：侧栏章节/文件列表「滚到当前」的一拍状态（与 VirtualList 配合）。
 - **`useAppChapterNavigation.ts`**：章节跳转、章节规则与最近文件、侧栏标签等联动；应用章节规则后重载当前文件时以视口末行恢复阅读位置（与 `useAppReaderUiPrefs` 切换排版一致）。
 - **`useAppFileSession.ts`**：打开文件/选目录、会话快照恢复、与流管道和持久化衔接；`resetSession` 置 `readingProgressSynced` 为 `false`；导入目录合并列表时若当前分类筛选为具体分类名，会把新项写上对应 `category`（「全部 / 未分类」筛选下不写）。
@@ -380,7 +380,7 @@ src/
 
 ###### `reader/`
 
-- **`chapterIndex.ts`**：当前视口行号对应的章节下标（二分查找）。
+- **`chapterIndex.ts`**：当前视口行号对应的章节下标（二分查找）；侧栏书签项上的章节名亦用同一函数按书签行号推断。
 - **`lineMapping.ts`**：物理行号与「滤空后显示行」的映射工具。
 - **`ebookAnchorLookup.ts`**：电子书内链与压缩空行下的显示行 ↔ 物理行映射。
 - **`readerEbookPointer.ts`**：阅读区内电子书内链指针/点击命中辅助。
@@ -564,14 +564,14 @@ src/
 | 文件                                                 | 主要功能                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AppHeader.vue`                                      | 顶栏：打开文件、书钉/书签、字体与字号行高、压缩空行/行首缩进、**高级换行策略**（Monaco `wrappingStrategy: advanced`）、内容上色、**高亮笔**（下拉列出当前文件自定义词及移除；背景/正文色来自阅读器变量供预览）、章节规则、主题、侧栏与全屏、查找与更多菜单等；**阅读器编辑**开关与编辑态**保存**。<br>从 `App.vue` 接收当前 **`shortcutBindings`** 并传给 `MoreMenu`；**`@open-color-scheme`** 可从高亮菜单进入配色弹窗                                                                                                                                                                                                                                                 |
-| `AppOverlays.vue`                                    | 蒙层弹窗：关于、快捷键、设置、配色、章节规则、书签与更新流等                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `AppOverlays.vue`                                    | 蒙层弹窗：关于、快捷键、设置、配色、章节规则、**添加/编辑书签**（备注框上方章节名 + 正文预览，样式与侧栏书签列表一致）与更新流等                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `AppContextMenu.vue`                                 | 通用右键菜单                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `AppFooter.vue`                                      | 底栏：当前路径、加载进度、阅读进度、字数、文件大小、编码                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `ReaderMain.vue`                                     | 阅读区：挂载编辑器与业务逻辑。<br>引入 **`readerMainMonaco.css`** 覆盖 Monaco 阅读区样式；编辑器静态选项集中在 `monaco/readerEditorOptions.ts`。<br>章节行内装饰与 **`highlightColors` / `highlightWordsByIndex`** 驱动的 Monarch 与装饰同步；选区添加自定义高亮词、色块选择器（按当前主题高亮色列表）；`monacoCustomHighlight` 开关。<br>**`ReaderHighlightFloat`** / **`ReaderImageLightbox`**；查找展开时可联动书钉；高亮词列表点击可进入查找；滚动与 probe。<br>全屏两侧空白滚轮经父组件调用 **`delegateEditorWheelFromBrowserEvent`**。<br>流式打开文件时在 `flushCarry` 末尾 **`setFullText`** 一次性灌入正文（保留 `appendText` 供其它场景）。**阅读器编辑模式**：`readerEditMode` + **`physicalReaderPath`** 时整盘 **`readWholeTextFile` / `setValue`**、Ctrl+S 保存、与压缩空行相关的进/出编辑滚动恢复，见 **「阅读器编辑模式」** |
+| `ReaderMain.vue`                                     | 阅读区：挂载编辑器与业务逻辑。<br>引入 **`readerMainMonaco.css`** 覆盖 Monaco 阅读区样式；编辑器静态选项集中在 `monaco/readerEditorOptions.ts`。<br>章节行内装饰与 **`highlightColors` / `highlightWordsByIndex`** 驱动的 Monarch 与装饰同步；选区添加自定义高亮词、色块选择器（按当前主题高亮色列表）；`monacoCustomHighlight` 开关。<br>**`ReaderHighlightFloat`** / **`ReaderImageLightbox`**；查找展开时可联动书钉；高亮词列表点击可进入查找；滚动与 probe。<br>全屏两侧空白滚轮经父组件调用 **`delegateEditorWheelFromBrowserEvent`**。<br>流式打开文件时在 `flushCarry` 末尾 **`setFullText`** 一次性灌入正文（保留 `appendText` 供其它场景）。**阅读器编辑模式**：`readerEditMode` + **`physicalReaderPath`** 时整盘 **`readWholeTextFile` / `setValue`**、Ctrl+S 保存、与压缩空行相关的进/出编辑滚动恢复，见 **「阅读器编辑模式」**。<br>**书签**：**`getBookmarkSaveAnchorDisplayLine`**（与保存锚点、列表跳转一致的「视口上沿 + 一行字高」逻辑行）、**`jumpToBookmarkLine`**（`revealLineNearTop` 后再 `scrollTop -= lineHeight` 为黏性章节条留白）、**`getViewportTopLine`** 等 |
 | `ReaderSidebar.vue`                                  | 侧栏容器：活动栏含文件 / 章节 / 书签 / 高亮词 / **AI 助手** / **角色** / 搜索（`constants/readerSidebarTab.ts`）。<br>挂载 `FileListPanel`、`ChapterListPanel`、`BookmarkListPanel`、`HighlightListPanel`、**`AiAssistantPanel`**、**`CharacterSidebarPanel`**、`SearchPanel`。<br>向文件列表下发 **`fileCategory` / `fileSort` / `fileCategoryCatalog`** 并上抛分类相关事件；与 `useReaderSidebarLists`、`useReaderInlineSearch` 等配合；**阅读器编辑**时章节区可提供刷新章节等入口                                                                                                                                                                                                |
 | `FileListPanel.vue`                                  | 侧栏「文件」：txt/电子书路径列表、**分类筛选**与 **排序**、编辑模式多选、右键与批量改分类。<br>单项右键支持分类/移除/重命名/在新窗口打开/在文件管理器显示（Ctrl+右键附加「清除该文件数据」）；筛选在具体分类时 footer 动作为「清空分类」。<br>`data-drop-zone="file-list"` 标记列表拖放接收区                                                                                                                                                                                                                                                                                                                                           |
 | `ChapterListPanel.vue`                               | 侧栏「章节」：章节列表、字数开关、跳转当前章                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `BookmarkListPanel.vue`                              | 侧栏「书签」：书签列表、跳转、编辑与清除                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `BookmarkListPanel.vue`                              | 侧栏「书签」：列表、跳转、编辑与清除；项内 **备注 / 章节名 / 正文预览**（章节由 `pickActiveChapterIdx` 推断；无备注但有章节名时不显示「无备注」占位；正文预览与弹窗同源逻辑）；**右键菜单** `Teleport` 到 **`document.body`** 并带 **`data-fullscreen-sidebar-float`**，避免被侧栏 `overflow` 裁切                                                                                                                                                                                                                                                                                                                                                                       |
 | `HighlightListPanel.vue`                             | 侧栏「高亮词」：展示当前文件高亮词，支持删除与点击定位（通过内联搜索流转）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `SearchPanel.vue`                                    | 侧栏「搜索」：当前文件内搜索、结果列表与命中跳转。<br>点击项按物理行映射到当前显示行并居中定位（压缩空行时对齐正文行）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `FileCategoryFlyoutList.vue`                         | 文件列表分类子菜单：统一渲染右键分类 flyout 与批量分类入口的选项（含计数）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -793,7 +793,7 @@ src/
 ### 章节与侧栏
 
 - 进入编辑并成功载入后 **`applyChaptersFromReaderPlainText`**（`chapter.ts` **`buildChaptersFromPlainText`**）从全文重算 **`chapters`**；编辑态下 **`setChapters`** 一般不挂章节标题行内装饰（避免与编辑行混淆）。侧栏章节列表头部可提供**刷新章节**以在编辑中手动重算。
-- **书签与侧栏搜索**：`meta` 中书签字段与搜索结果均以**源物理行**为键。只读且开启压缩空行时，跳转需 `physicalLineToDisplayForReader` 等映射；**编辑态**下 Monaco 与磁盘一一对应，**`useAppBookmarkPins`**（视口内活动书签判定、`jumpToBookmark`）与 **`App.vue`** 的侧栏搜索（`runSidebarSearch` / **`onJumpToSearchResult`**）在 **`readerEditMode`** 为 true 时按**未压缩**语义使用行号（物理行即 Monaco 行）；切换编辑/只读且侧栏有搜索词时会 **`watch(readerEditMode)`** 触发一次 **`scheduleSidebarSearch`** 以刷新结果中的展示行号。
+- **书签与侧栏搜索**：`meta` 中书签字段与搜索结果均以**源物理行**为键（书签行号语义、列表与弹窗 UI 见 **「书签（行号语义、侧栏与弹窗）」**）。只读且开启压缩空行时，跳转需 `physicalLineToDisplayForReader` 等映射；**编辑态**下 Monaco 与磁盘一一对应，**`useAppBookmarkPins`**（视口内活动书签判定、`jumpToBookmark`）与 **`App.vue`** 的侧栏搜索（`runSidebarSearch` / **`onJumpToSearchResult`**）在 **`readerEditMode`** 为 true 时按**未压缩**语义使用行号（物理行即 Monaco 行）；切换编辑/只读且侧栏有搜索词时会 **`watch(readerEditMode)`** 触发一次 **`scheduleSidebarSearch`** 以刷新结果中的展示行号。
 
 ### 同步当前文件与主进程 IPC
 
@@ -805,6 +805,39 @@ src/
 
 - **`AppHeader.vue`**：除原有阅读控件外，含**阅读器编辑**开关与编辑态**保存**等。
 - **`ReaderMain.vue`**：编辑态下整盘读写、模式选项切换、保存命令与上述滚动恢复逻辑；只读态仍以流式 **`setFullText`** 为准。
+
+## 书签（行号语义、侧栏与弹窗）
+
+### 持久化行号（`colorTxt.file.meta` → `FileBookmarkItem.line`）
+
+- **只读**且经滤空管线时：存 **物理行**（与 `viewportTopPhysicalLine`、章节重建所用全文分行一致）。
+- **`readerEditMode`**：Monaco 与磁盘一行对一行，存盘行号即 **Monaco 显示行**，不经 `viewportDisplayLineToPhysicalLine`。
+
+### 添加书签时记哪一行
+
+- **`ReaderMain.getBookmarkSaveAnchorDisplayLine()`**：与 **`jumpToBookmarkLine`** 对齐——在当前滚动下取视口内容区 **上沿 + 一行字高**（`scrollTop + EditorOption.lineHeight`）处的 **逻辑行号**，对 **`getTopForLineNumber`** 做二分（折行下不同于简单「顶行 +1」）；无编辑器/模型时返回 `null`。
+- **`useAppBookmarkPins`**：`confirmAddBookmark` 与弹窗预览共用 **`getPendingBookmarkSaveLine()`**——新建时优先锚点显示行再映射为物理行（只读）或直接用显示行（编辑）；锚点不可用时回退 **`viewportTopPhysicalLine`**；**编辑已有书签** 只改备注、**不改行号**。
+
+### 从列表跳转
+
+- **`jumpToBookmark`**：`physicalLineToDisplayForReader`（只读）后调用 **`ReaderMain.jumpToBookmarkLine`**：`revealLineNearTop` 后将 **`scrollTop`** 设为 **`getTopForLineNumber(line) - lineHeight`**，使目标行落在视口上沿约一行高之下，为黏性章节条留白。
+
+### 侧栏列表（`BookmarkListPanel.vue`）
+
+- **章节名**：`useAppBookmarkPins` 对每条书签用 **`pickActiveChapterIdx(chapters, line)`**（`reader/chapterIndex.ts`）；**只读**下先将存盘物理行换为 **Monaco 显示行** 再查章，**编辑态** 下用存盘行直接查（与章节表 `lineNumber` 坐标一致）。无匹配或标题去空后无字则不展示章节行。
+- **正文预览**：与弹窗相同，从该书签行起向下扫描物理行，取首个 **trim** 非空内容；否则展示「（空行）」类占位。
+- **备注占位**：有非空备注照常显示；**无备注** 若能显示章节名则不渲染「无备注」；无备注且无章节名时仍显示「无备注」斜体占位。
+- **样式**：**`.bookmarkChapter`**（11px、字重 600、`opacity: 0.78`、单行省略）、**`.bookmarkContent`**（11px、斜体、`opacity: 0.7`、单行省略）；**`.bookmarkMain`** 内 **`gap: 2px`**，备注/章节/正文行统一 **`line-height: 1.35`**，与弹窗预览对齐。
+- **右键菜单**：**`AppContextMenu`** 置于 **`<Teleport to="body">`**，组件根上 **`data-fullscreen-sidebar-float`**（与 **`FileListPanel`** 等侧栏 Teleport 菜单一致），避免侧栏滚动容器 **`overflow`** 裁切；坐标仍用 **`clientX` / `clientY`**（视口坐标）。
+
+### 添加 / 编辑书签弹窗（`AppOverlays.vue`）
+
+- **`addBookmarkDialogPreview`**（`useAppBookmarkPins` 计算属性）：仅在 **`addBookmarkOpen`** 时有效；内容含 **`chapterTitle?`**、**`content`**，推导行号与 **`confirmAddBookmark`** 一致；依赖 **`chapters`、`totalLineCount、lastProbeLine、readerEditMode`** 等以便章节重建、滚动探针、流式增行时刷新。
+- **布局**：备注 **`textarea` 上方** 为预览区；章节名与正文样式、行距、间距与侧栏 **`.bookmarkChapter` / `.bookmarkContent` / `.bookmarkMain`** 一致；正文预览单行省略、**`title`** 悬停可看全文。
+
+### `App.vue` 数据流
+
+- **`useAppBookmarkPins`** 除原有依赖外传入 **`chapters`** ref，供列表与弹窗推断章节名。
 
 ## 界面与阅读偏好默认值
 
