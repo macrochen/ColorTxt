@@ -2,6 +2,7 @@
 export type SettingsTabId =
   | "general"
   | "reading"
+  | "voiceRead"
   | "ai"
   | "vectorModel"
   | "txt2img"
@@ -43,6 +44,16 @@ const emit = defineEmits<{
         @click="emit('update:activeTab', 'reading')"
       >
         阅读
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="tabBtn"
+        :class="{ active: activeTab === 'voiceRead' }"
+        :aria-selected="activeTab === 'voiceRead'"
+        @click="emit('update:activeTab', 'voiceRead')"
+      >
+        语音朗读
       </button>
       <button
         type="button"

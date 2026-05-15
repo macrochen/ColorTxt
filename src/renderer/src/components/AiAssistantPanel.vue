@@ -2182,31 +2182,32 @@ defineExpose({
 }
 
 .aiComposerSendBtn:not(:disabled) {
-  color: #ffffff;
+  color: var(--input-bg);
   background: var(--primary);
 }
 
 .aiActivityLikeBtn.aiComposerSendBtn:hover:not(:disabled) {
-  color: #ffffff;
+  color: var(--input-bg);
   background: var(--primary-hover);
 }
 
 .aiComposerStopBtn {
-  color: var(--danger);
+  border-radius: 50%;
+}
+
+.aiComposerStopBtn:not(:disabled) {
+  color: var(--input-bg);
+  background: var(--danger);
 }
 
 .aiActivityLikeBtn.aiComposerStopBtn:hover:not(:disabled) {
-  color: var(--danger-hover);
+  color: var(--input-bg);
+  background: var(--danger-hover);
 }
 
 .aiComposerStopBtn .svg :deep(svg) {
-  width: 24px;
-  height: 24px;
-}
-
-.aiComposerStopBtn:hover:not(:disabled) {
-  background: transparent;
-  color: var(--danger-hover);
+  width: 12px;
+  height: 12px;
 }
 
 .aiComposerActionBtn .svg :deep(svg path) {

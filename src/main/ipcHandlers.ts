@@ -47,6 +47,8 @@ import {
   copyImageToAbsolutePath,
   migrateCharacterPortraitCacheRoot,
 } from "./characterPortraitFs";
+import { synthesizeEdgeTtsMp3 } from "./voiceReadEdgeTts";
+import type { VoiceReadEdgeTtsRequest } from "@shared/voiceReadEdgeIpc";
 
 type TxtFileItem = { name: string; path: string; size: number };
 type DirListScanProgress = (item: { name: string; path: string }) => void;
@@ -827,6 +829,35 @@ export function registerMainIpcHandlers(
       });
     }
   });
+
+  ipcMain.handle(
+    "voiceRead:edgeTts",
+    async (_evt, raw: unknown): Promise<
+      | { ok: true; mp3: ArrayBuffer }
+      | { ok: false; error: string }
+    > => {
+      if (!raw || typeof raw !== "object") {
+        return { ok: false, error: "无效请求" };
+      }
+      const o = raw as Record<string, unknown>;
+      const text = typeof o.text === "string" ? o.text : "";
+      const voice = typeof o.voice === "string" ? o.voice : "";
+      const lang = typeof o.lang === "string" ? o.lang : "zh-CN";
+      const rate = typeof o.rate === "number" && Number.isFinite(o.rate) ? o.rate : 1;
+      const pitch =
+        typeof o.pitch === "number" && Number.isFinite(o.pitch) ? o.pitch : 1;
+      const req: VoiceReadEdgeTtsRequest = { text, voice, lang, rate, pitch };
+      try {
+        const mp3 = await synthesizeEdgeTtsMp3(req);
+        return { ok: true, mp3 };
+      } catch (e) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    },
+  );
 
   registerAiIpcHandlers();
 }

@@ -70,12 +70,14 @@ export default defineConfig({
         // `iconv-lite` 常含动态编码加载，保持 external。
         // `jschardet` 由 Rollup 打入主包；`jszip`/`pako` 仅 renderer 使用，主进程勿 external。
         // `electron-updater` 保持 CJS 动态 require 与依赖树习惯用法。
+        // `ws` 内含对可选原生模块 `bufferutil`/`utf-8-validate` 的动态加载；打入 bundle 时会被解析成硬导入导致启动失败，故保持 external。
         external: [
           "font-list",
           "iconv-lite",
           "electron-updater",
           "better-sqlite3",
           "sqlite-vec",
+          "ws",
         ],
       },
     },

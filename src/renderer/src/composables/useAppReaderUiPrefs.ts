@@ -40,6 +40,8 @@ export function useAppReaderUiPrefs(deps: {
   viewportEndLine: Ref<number>;
   viewportVisualProgressPercent: Ref<number>;
   viewportAtBottom: Ref<boolean>;
+  /** 语音朗读播放中：禁止打开查找栏 */
+  isVoiceReadBlocksFind?: Ref<boolean>;
 }) {
   function onViewportTopLineChange(lineNumber: number) {
     deps.viewportTopLine.value = lineNumber;
@@ -171,10 +173,12 @@ export function useAppReaderUiPrefs(deps: {
   }
 
   function toggleReaderFind() {
+    if (deps.isVoiceReadBlocksFind?.value) return;
     deps.readerRef.value?.toggleFindWidget?.();
   }
 
   function onToggleFind() {
+    if (deps.isVoiceReadBlocksFind?.value) return;
     // 全屏下先收顶栏再切换查找（关闭查找时顶栏本可保持，再收一次无害）
     if (deps.isFullscreenView.value) deps.showFullscreenHeader.value = false;
     toggleReaderFind();

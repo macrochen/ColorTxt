@@ -27,6 +27,8 @@ export type CustomSelectItem =
       skipCategoryMark?: boolean;
       /** 主标签后的附加文案（如「(12)」、说明等），样式见 .appShellMenuItemSuffix */
       labelSuffix?: string;
+      /** 主标签下方的第二行说明（如引擎简介） */
+      description?: string;
       /** 追加到 `appShellMenuItemPrefix` 容器上的 class（如旋转动画） */
       prefixWrapperClass?: string;
       /** 追加到菜单按钮上的 class（如 `appShellMenuItem--success`） */
@@ -34,7 +36,8 @@ export type CustomSelectItem =
       /** `actionOnly` 为 true 时点击后不自动收合面板 */
       keepOpenOnAction?: boolean;
     }
-  | { kind: "divider" };
+  | { kind: "divider" }
+  | { kind: "groupLabel"; label: string };
 
 const props = withDefaults(
   defineProps<{
@@ -268,6 +271,7 @@ function itemButtonClass(it: Extract<CustomSelectItem, { kind: "item" }>) {
   if (it.danger) c.push("appShellMenuItem--danger");
   if (it.itemClass?.trim()) c.push(it.itemClass.trim());
   if (!it.actionOnly && it.id === props.modelValue) c.push("is-active");
+  if (it.description?.trim()) c.push("appShellMenuItem--stacked");
   return c.join(" ");
 }
 
@@ -357,6 +361,13 @@ const triggerMainText = computed(() => {
         <div class="customSelectSection">
           <template v-for="(raw, idx) in fixedTopItems" :key="'t' + idx">
             <div v-if="raw.kind === 'divider'" class="appShellMenuDivider" />
+            <div
+              v-else-if="raw.kind === 'groupLabel'"
+              class="appShellMenuGroupLabel"
+              role="presentation"
+            >
+              {{ raw.label }}
+            </div>
             <button
               v-else-if="raw.kind === 'item'"
               type="button"
@@ -381,7 +392,20 @@ const triggerMainText = computed(() => {
                   v-html="raw.prefixHtml"
                 />
                 <span class="appShellMenuItemLabelWithCount">
-                  <span class="appShellMenuItemLabelText">{{ raw.label }}</span>
+                  <span
+                    class="appShellMenuItemLabelBlock"
+                    :class="{
+                      'appShellMenuItemLabelBlock--stacked':
+                        raw.description?.trim(),
+                    }"
+                  >
+                    <span class="appShellMenuItemLabelText">{{ raw.label }}</span>
+                    <span
+                      v-if="raw.description?.trim()"
+                      class="appShellMenuItemDescription"
+                      >{{ raw.description }}</span
+                    >
+                  </span>
                   <span
                     v-if="raw.labelSuffix?.trim()"
                     class="appShellMenuItemSuffix"
@@ -402,6 +426,13 @@ const triggerMainText = computed(() => {
         >
           <template v-for="(raw, idx) in scrollItems" :key="'s' + idx">
             <div v-if="raw.kind === 'divider'" class="appShellMenuDivider" />
+            <div
+              v-else-if="raw.kind === 'groupLabel'"
+              class="appShellMenuGroupLabel"
+              role="presentation"
+            >
+              {{ raw.label }}
+            </div>
             <button
               v-else-if="raw.kind === 'item'"
               type="button"
@@ -426,7 +457,20 @@ const triggerMainText = computed(() => {
                   v-html="raw.prefixHtml"
                 />
                 <span class="appShellMenuItemLabelWithCount">
-                  <span class="appShellMenuItemLabelText">{{ raw.label }}</span>
+                  <span
+                    class="appShellMenuItemLabelBlock"
+                    :class="{
+                      'appShellMenuItemLabelBlock--stacked':
+                        raw.description?.trim(),
+                    }"
+                  >
+                    <span class="appShellMenuItemLabelText">{{ raw.label }}</span>
+                    <span
+                      v-if="raw.description?.trim()"
+                      class="appShellMenuItemDescription"
+                      >{{ raw.description }}</span
+                    >
+                  </span>
                   <span
                     v-if="raw.labelSuffix?.trim()"
                     class="appShellMenuItemSuffix"
@@ -440,6 +484,13 @@ const triggerMainText = computed(() => {
         <div class="customSelectSection">
           <template v-for="(raw, idx) in fixedBottomItems" :key="'b' + idx">
             <div v-if="raw.kind === 'divider'" class="appShellMenuDivider" />
+            <div
+              v-else-if="raw.kind === 'groupLabel'"
+              class="appShellMenuGroupLabel"
+              role="presentation"
+            >
+              {{ raw.label }}
+            </div>
             <button
               v-else-if="raw.kind === 'item'"
               type="button"
@@ -464,7 +515,20 @@ const triggerMainText = computed(() => {
                   v-html="raw.prefixHtml"
                 />
                 <span class="appShellMenuItemLabelWithCount">
-                  <span class="appShellMenuItemLabelText">{{ raw.label }}</span>
+                  <span
+                    class="appShellMenuItemLabelBlock"
+                    :class="{
+                      'appShellMenuItemLabelBlock--stacked':
+                        raw.description?.trim(),
+                    }"
+                  >
+                    <span class="appShellMenuItemLabelText">{{ raw.label }}</span>
+                    <span
+                      v-if="raw.description?.trim()"
+                      class="appShellMenuItemDescription"
+                      >{{ raw.description }}</span
+                    >
+                  </span>
                   <span
                     v-if="raw.labelSuffix?.trim()"
                     class="appShellMenuItemSuffix"
@@ -589,6 +653,12 @@ const triggerMainText = computed(() => {
   min-height: 36px;
   box-sizing: border-box;
   line-height: 1.2;
+}
+.customSelectPanel :deep(.appShellMenuItem--stacked) {
+  min-height: 0;
+}
+.customSelectPanel :deep(.appShellMenuGroupLabel + .appShellMenuItem) {
+  margin-top: 0;
 }
 .customSelectSection {
   flex-shrink: 0;

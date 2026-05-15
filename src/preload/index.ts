@@ -27,6 +27,7 @@ import type {
   AiTxt2ImgInvokeDraft,
   AiTxt2ImgInvokeResult,
 } from "@shared/aiTxt2ImgIpc";
+import type { VoiceReadEdgeTtsRequest } from "@shared/voiceReadEdgeIpc";
 
 /** sandbox 下 preload 不可 require('path')，与 renderer 的 joinFs 行为对齐 */
 function joinUserDataSubdir(userData: string, segment: string): string {
@@ -143,6 +144,10 @@ const api = {
         noLink: true,
       } satisfies ColorTxtShowMessageBoxOptions)
       .then((r) => (r as ColorTxtShowMessageBoxResult).response === 1),
+  voiceReadEdgeTts: (payload: VoiceReadEdgeTtsRequest) =>
+    ipcRenderer.invoke("voiceRead:edgeTts", payload) as Promise<
+      { ok: true; mp3: ArrayBuffer } | { ok: false; error: string }
+    >,
   listTxtFilesInDirectory: (dirPath: string) =>
     ipcRenderer.invoke("dir:listTxtFiles", dirPath) as Promise<{
       dirPath: string;

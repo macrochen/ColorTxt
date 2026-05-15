@@ -1,14 +1,16 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import IconButton from "./IconButton.vue";
 import FontPicker from "./FontPicker.vue";
 import MoreMenu from "./MoreMenu.vue";
 import { icons } from "../icons";
+import readingSvg from "../assets/reading.svg?raw";
 import type { ShortcutBindingMap } from "../services/shortcutRegistry";
 
 /** 仅路径；阅读进度由 `file.meta` 提供（菜单侧由父组件合并） */
 export type RecentFileItem = { path: string; progress?: number };
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     currentTheme: string;
     showSidebar: boolean;
@@ -35,6 +37,11 @@ withDefaults(
     canPin?: boolean;
     bookmarkActive?: boolean;
     canBookmark?: boolean;
+    /** 语音朗读模式已开启 */
+    voiceReadActive?: boolean;
+    canVoiceRead?: boolean;
+    /** 朗读模式中：禁用编辑/字体/行高/压缩空行/缩进/高级换行 */
+    voiceReadHeaderLocked?: boolean;
     /** 阅读器是否处于可编辑模式 */
     readerEditMode: boolean;
     /** 是否允许进入编辑（有文件且加载完成等，由父组件计算） */
@@ -49,6 +56,9 @@ withDefaults(
     canPin: true,
     bookmarkActive: false,
     canBookmark: true,
+    voiceReadActive: false,
+    canVoiceRead: true,
+    voiceReadHeaderLocked: false,
     readerEditMode: false,
     canEnterReaderEditMode: false,
   },
@@ -85,7 +95,10 @@ const emit = defineEmits<{
   bookmarkClick: [];
   toggleReaderEdit: [];
   saveReaderFile: [];
+  voiceReadToggle: [];
 }>();
+
+const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
 </script>
 
 <template>
@@ -99,7 +112,7 @@ const emit = defineEmits<{
       :pressed="readerEditMode"
       title="编辑模式"
       aria-label="切换编辑模式"
-      :disabled="!readerEditMode && !canEnterReaderEditMode"
+      :disabled="vrFormatLock || (!readerEditMode && !canEnterReaderEditMode)"
       @click="emit('toggleReaderEdit')"
     />
     <IconButton
@@ -137,38 +150,52 @@ const emit = defineEmits<{
           @click="emit('bookmarkClick')"
         />
         <span class="toolbarDivider" aria-hidden="true"></span>
-        <FontPicker
-          :monaco-font-family="monacoFontFamily"
-          @set-monaco-font="(fontFamily) => emit('setMonacoFont', fontFamily)"
-        />
         <IconButton
-          :icon-html="icons.fontSizeDown"
-          title="减小字号"
-          aria-label="减小字号"
-          :disabled="!canDecreaseFont"
-          @click="emit('decreaseFontSize')"
+          class="voiceReadBtn"
+          :icon-html="readingSvg"
+          :active="voiceReadActive"
+          :pressed="voiceReadActive"
+          title="语音朗读"
+          aria-label="语音朗读"
+          :disabled="!voiceReadActive && !canVoiceRead"
+          @click="emit('voiceReadToggle')"
         />
-        <IconButton
-          :icon-html="icons.fontSizeUp"
-          title="加大字号"
-          aria-label="加大字号"
-          :disabled="!canIncreaseFont"
-          @click="emit('increaseFontSize')"
-        />
-        <IconButton
-          :icon-html="icons.lineHeightDown"
-          title="减小行高"
-          aria-label="减小行高"
-          :disabled="!canDecreaseLineHeight"
-          @click="emit('decreaseLineHeight')"
-        />
-        <IconButton
-          :icon-html="icons.lineHeightUp"
-          title="加大行高"
-          aria-label="加大行高"
-          :disabled="!canIncreaseLineHeight"
-          @click="emit('increaseLineHeight')"
-        />
+        <span class="toolbarDivider" aria-hidden="true"></span>
+        <div class="hdrLockable">
+          <FontPicker
+            :monaco-font-family="monacoFontFamily"
+            :disabled="vrFormatLock"
+            @set-monaco-font="(fontFamily) => emit('setMonacoFont', fontFamily)"
+          />
+          <IconButton
+            :icon-html="icons.fontSizeDown"
+            title="减小字号"
+            aria-label="减小字号"
+            :disabled="vrFormatLock || !canDecreaseFont"
+            @click="emit('decreaseFontSize')"
+          />
+          <IconButton
+            :icon-html="icons.fontSizeUp"
+            title="加大字号"
+            aria-label="加大字号"
+            :disabled="vrFormatLock || !canIncreaseFont"
+            @click="emit('increaseFontSize')"
+          />
+          <IconButton
+            :icon-html="icons.lineHeightDown"
+            title="减小行高"
+            aria-label="减小行高"
+            :disabled="vrFormatLock || !canDecreaseLineHeight"
+            @click="emit('decreaseLineHeight')"
+          />
+          <IconButton
+            :icon-html="icons.lineHeightUp"
+            title="加大行高"
+            aria-label="加大行高"
+            :disabled="vrFormatLock || !canIncreaseLineHeight"
+            @click="emit('increaseLineHeight')"
+          />
+        </div>
         <span class="toolbarDivider" aria-hidden="true"></span>
         <IconButton
           :icon-html="icons.compress"
@@ -176,7 +203,7 @@ const emit = defineEmits<{
           :pressed="compressBlankLines"
           title="压缩空行"
           aria-label="压缩空行"
-          :disabled="readerEditMode"
+          :disabled="vrFormatLock || readerEditMode"
           @click="emit('toggleCompressBlankLines')"
         />
         <IconButton
@@ -185,7 +212,7 @@ const emit = defineEmits<{
           :pressed="leadIndentFullWidth"
           title="行首缩进"
           aria-label="行首缩进"
-          :disabled="readerEditMode"
+          :disabled="vrFormatLock || readerEditMode"
           @click="emit('toggleLeadIndentFullWidth')"
         />
       </div>
@@ -196,6 +223,7 @@ const emit = defineEmits<{
         title="高级换行策略
 开启可以优化换行效果，但对性能影响较大。"
         aria-label="高级换行策略"
+        :disabled="vrFormatLock"
         @click="$emit('toggleMonacoAdvancedWrapping')"
       />
       <IconButton
@@ -236,21 +264,23 @@ const emit = defineEmits<{
         :title="inFullscreen ? '退出全屏' : '全屏阅读'"
         @click="$emit('toggleFullscreen')"
       />
-      <MoreMenu
-        :recent-files="recentFiles"
-        :shortcut-bindings="shortcutBindings"
-        @toggle-find="emit('toggleFind')"
-        @open-github="emit('openGithub')"
-        @check-for-updates="emit('checkForUpdates')"
-        @open-shortcuts="emit('openShortcuts')"
-        @open-settings="emit('openSettings')"
-        @open-color-scheme="emit('openColorScheme')"
-        @open-new-window="emit('openNewWindow')"
-        @open-about="emit('openAbout')"
-        @quit-app="emit('quitApp')"
-        @open-recent-file="(filePath) => emit('openRecentFile', filePath)"
-        @clear-recent-files="emit('clearRecentFiles')"
-      />
+      <div class="moreMenuWrap">
+        <MoreMenu
+          :recent-files="recentFiles"
+          :shortcut-bindings="shortcutBindings"
+          @toggle-find="emit('toggleFind')"
+          @open-github="emit('openGithub')"
+          @check-for-updates="emit('checkForUpdates')"
+          @open-shortcuts="emit('openShortcuts')"
+          @open-settings="emit('openSettings')"
+          @open-color-scheme="emit('openColorScheme')"
+          @open-new-window="emit('openNewWindow')"
+          @open-about="emit('openAbout')"
+          @quit-app="emit('quitApp')"
+          @open-recent-file="(filePath) => emit('openRecentFile', filePath)"
+          @clear-recent-files="emit('clearRecentFiles')"
+        />
+      </div>
     </div>
   </header>
 </template>
@@ -290,6 +320,29 @@ const emit = defineEmits<{
   height: 22px;
   background: var(--border);
   flex-shrink: 0;
-  margin: 0 10px;
+  /* margin: 0 10px; */
+}
+
+.moreMenuWrapLocked {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+.hdrLockable {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voiceReadBtn.iconBtn.active {
+  background: var(--primary);
+}
+
+.voiceReadBtn.iconBtn.active:hover {
+  background: var(--primary-hover);
+}
+
+.voiceReadBtn.iconBtn.active :deep(.icon) {
+  color: #ffffff;
 }
 </style>

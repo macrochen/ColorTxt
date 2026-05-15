@@ -15,6 +15,7 @@ import {
   type Chapter,
 } from "./chapter";
 import AppHeader, { type RecentFileItem } from "./components/AppHeader.vue";
+import VoiceReadToolbar from "./components/VoiceReadToolbar.vue";
 import ReaderSidebar from "./components/ReaderSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import ReaderMain from "./components/ReaderMain.vue";
@@ -47,6 +48,7 @@ import { useAppReaderUiPrefs } from "./composables/useAppReaderUiPrefs";
 import { useAppShellThemeWatch } from "./composables/useAppShellThemeWatch";
 import { useAppSyncCurrentFileWatch } from "./composables/useAppSyncCurrentFileWatch";
 import { useAppWindowBindings } from "./composables/useAppWindowBindings";
+import { useAppVoiceRead } from "./composables/useAppVoiceRead";
 import { pickActiveChapterIdx } from "./reader/chapterIndex";
 import { useTxtStreamPipeline } from "./composables/useTxtStreamPipeline";
 import { fileHistoryKey } from "./stores/recentHistoryStore";
@@ -100,6 +102,7 @@ import {
   SIDEBAR_ACTIVITY_BAR_WIDTH,
   type ReaderSurfacePalette,
 } from "./constants/appUi";
+import { mergeVoiceReadSettings, type VoiceReadSettings } from "./constants/voiceRead";
 import {
   DEFAULT_HIGHLIGHT_COLORS_DARK,
   DEFAULT_HIGHLIGHT_COLORS_LIGHT,
@@ -244,6 +247,9 @@ const showChapterCounts = ref(defaultShowChapterCounts);
 /** AI 阅读助手工具栏：深度思考 / 防剧透（持久化至 colorTxt.ui.settings） */
 const aiAssistantDeepThinking = ref(false);
 const aiAssistantSpoilerSafe = ref(false);
+const voiceReadSettings = ref<VoiceReadSettings>(
+  mergeVoiceReadSettings(undefined),
+);
 const sidebarTab = ref<ReaderSidebarTab>("files");
 /** 设置 → AI「启用 AI 阅读助手功能」，控制侧栏「AI 阅读助手」 */
 const aiFeaturesEnabled = ref(true);
@@ -631,6 +637,7 @@ const persistence = useAppPersistence({
   aiCustomSkills,
   aiAssistantDeepThinking,
   aiAssistantSpoilerSafe,
+  voiceReadSettings,
 });
 const {
   persistSettings,
@@ -657,6 +664,11 @@ watch(fileListEditing, (editing, wasEditing) => {
 
 watch(aiAssistantDeepThinking, () => persistSettings());
 watch(aiAssistantSpoilerSafe, () => persistSettings());
+watch(
+  voiceReadSettings,
+  () => persistSettings(),
+  { deep: true },
+);
 
 /** 加载期底栏/侧栏：当前文件的存档进度仅来自 file.meta */
 const archivedProgressForCurrentFile = computed(() => {
@@ -1061,6 +1073,63 @@ const {
   applyChapterMatchRules,
 } = chapterNav;
 
+const {
+  mode: voiceReadMode,
+  isSynthesizing: voiceReadSynthesizing,
+  toolbarRate: voiceReadToolbarRate,
+  toolbarPitch: voiceReadToolbarPitch,
+  canStartVoiceRead: canVoiceRead,
+  isVoiceReadActive,
+  isVoiceReadScrollLocked,
+  isVoiceReadBlocksFind,
+  isVoiceReadHeaderLocked,
+  toggleVoiceReadToolbar,
+  togglePlayPause: voiceReadTogglePlayPause,
+  restartFromViewportTopAfterNavigation: voiceReadRestartFromViewportTop,
+  exitVoiceRead,
+  playPrevLine: voiceReadPlayPrevLine,
+  playNextLine: voiceReadPlayNextLine,
+  regenerateCurrentLine: voiceReadRegenerateCurrentLine,
+  canPlayPrevLine: voiceReadCanPlayPrevLine,
+  canPlayNextLine: voiceReadCanPlayNextLine,
+} = useAppVoiceRead({
+  readerRef,
+  voiceReadSettings,
+  currentFile,
+  loading,
+  readerEditMode,
+  monacoSmoothScrolling,
+});
+
+function scheduleVoiceReadResumeAfterJump() {
+  if (voiceReadMode.value !== "playing") return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      voiceReadRestartFromViewportTop();
+    });
+  });
+}
+
+function onJumpToChapterFromSidebar(ch: Chapter) {
+  jumpToChapter(ch);
+  scheduleVoiceReadResumeAfterJump();
+}
+
+function jumpToBookmarkWithVoiceRead(line: number) {
+  jumpToBookmark(line);
+  scheduleVoiceReadResumeAfterJump();
+}
+
+function jumpToPrevChapterWithVoiceRead() {
+  jumpToPrevChapter();
+  scheduleVoiceReadResumeAfterJump();
+}
+
+function jumpToNextChapterWithVoiceRead() {
+  jumpToNextChapter();
+  scheduleVoiceReadResumeAfterJump();
+}
+
 const canEnterReaderEditMode = computed(
   () =>
     Boolean(currentFile.value) &&
@@ -1160,6 +1229,7 @@ async function handleWindowCloseRequest() {
 function jumpToChapterFromAiAssistant(ch: Chapter) {
   ensurePinBeforeRevealFindWidget();
   jumpToChapter(ch);
+  scheduleVoiceReadResumeAfterJump();
 }
 
 const readerUi = useAppReaderUiPrefs({
@@ -1181,6 +1251,7 @@ const readerUi = useAppReaderUiPrefs({
   viewportEndLine,
   viewportVisualProgressPercent,
   viewportAtBottom,
+  isVoiceReadBlocksFind,
 });
 
 const {
@@ -1334,6 +1405,7 @@ function onFindHighlightTermFromSidebar(text: string) {
     smooth: true,
   });
   hasInlineSearchHighlight.value = found === true;
+  scheduleVoiceReadResumeAfterJump();
 }
 
 function clearReaderInlineSearchHighlight() {
@@ -1553,6 +1625,7 @@ function onJumpToSearchResult(item: SidebarSearchResult) {
     endColumn,
   );
   queueMicrotask(() => readerRef.value?.emitProbeLine?.());
+  scheduleVoiceReadResumeAfterJump();
 }
 
 onBeforeUnmount(() => {
@@ -1633,6 +1706,7 @@ async function applySettings(payload: SettingsApplyPayload) {
     payload.aiSkillsEnabled,
     aiCustomSkills.value.map((s) => s.id),
   );
+  voiceReadSettings.value = mergeVoiceReadSettings(payload.voiceRead);
   aiAssistantConfigSyncNonce.value += 1;
   persistSettings();
   if (!payload.restoreSessionOnStartup) {
@@ -1722,8 +1796,8 @@ useAppWindowBindings({
   pickTxtDirectory,
   onBookmarkClick,
   skipNextThemeNativeIpc,
-  jumpToPrevChapter,
-  jumpToNextChapter,
+  jumpToPrevChapter: jumpToPrevChapterWithVoiceRead,
+  jumpToNextChapter: jumpToNextChapterWithVoiceRead,
   openSettings: () => {
     showSettingsPanel.value = true;
   },
@@ -1742,6 +1816,7 @@ useAppWindowBindings({
   readerDropOverlayVisible,
   handleWindowCloseRequest,
   readerEditMode,
+  voiceReadScrollLocked: isVoiceReadScrollLocked,
 });
 
 useAppShellThemeWatch({
@@ -1783,6 +1858,9 @@ useAppShellThemeWatch({
         :can-pin="canPin"
         :bookmark-active="bookmarkActive"
         :can-bookmark="canBookmark"
+        :voice-read-active="isVoiceReadActive"
+        :can-voice-read="canVoiceRead"
+        :voice-read-header-locked="isVoiceReadHeaderLocked"
         :current-theme="currentTheme"
         :show-sidebar="showSidebar"
         :can-increase-font="readerFontSize < maxFontSize"
@@ -1835,6 +1913,7 @@ useAppShellThemeWatch({
         @quit-app="quitApp"
         @toggle-reader-edit="onToggleReaderEdit"
         @save-reader-file="onSaveReaderFile"
+        @voice-read-toggle="toggleVoiceReadToolbar"
       />
     </div>
 
@@ -1911,7 +1990,7 @@ useAppShellThemeWatch({
           @pick-directory="pickTxtDirectory"
           @import-dropped-paths="onImportDroppedPathsFromList"
           @open-file="openFileFromSidebar"
-          @jump-to-chapter="jumpToChapter"
+          @jump-to-chapter="onJumpToChapterFromSidebar"
           @jump-to-chapter-from-ai="jumpToChapterFromAiAssistant"
           @clear-file-list="clearFileList"
           @clear-file-list-category="clearFileListForCategory"
@@ -1921,7 +2000,7 @@ useAppShellThemeWatch({
           @open-file-in-new-window="onOpenFileInNewWindow"
           @close-current-file="closeCurrentFile"
           @refresh-chapters-from-reader="applyChaptersFromReaderPlainText"
-          @jump-to-bookmark="jumpToBookmark"
+          @jump-to-bookmark="jumpToBookmarkWithVoiceRead"
           @clear-bookmarks="clearCurrentFileBookmarks"
           @remove-bookmarks="removeCurrentFileBookmarks"
           @edit-bookmark="onEditBookmark"
@@ -1987,6 +2066,10 @@ useAppShellThemeWatch({
         <ReaderMain
           ref="readerRef"
           class="readerPane"
+          :voice-read-scroll-locked="isVoiceReadScrollLocked"
+          :voice-read-paused="isVoiceReadActive && voiceReadMode === 'paused'"
+          :voice-read-blocks-find="isVoiceReadBlocksFind"
+          @voice-read-resume="voiceReadTogglePlayPause"
           :monaco-custom-highlight="monacoCustomHighlight"
           :txtr-delimited-match-cross-line="txtrDelimitedMatchCrossLine"
           :compress-blank-lines="compressBlankLines"
@@ -2017,6 +2100,23 @@ useAppShellThemeWatch({
           @reader-edit-loaded="onReaderEditLoaded"
           @reader-edit-load-failed="onReaderEditLoadFailed"
           @reader-edit-save-request="onSaveReaderFile"
+        />
+        <VoiceReadToolbar
+          :visible="isVoiceReadActive"
+          :mode="voiceReadMode"
+          :synthesizing="voiceReadSynthesizing"
+          :toolbar-rate="voiceReadToolbarRate"
+          :toolbar-pitch="voiceReadToolbarPitch"
+          :engine="voiceReadSettings.engine"
+          :can-prev-line="voiceReadCanPlayPrevLine"
+          :can-next-line="voiceReadCanPlayNextLine"
+          @update:toolbar-rate="voiceReadToolbarRate = $event"
+          @update:toolbar-pitch="voiceReadToolbarPitch = $event"
+          @toggle-play-pause="voiceReadTogglePlayPause"
+          @prev-line="voiceReadPlayPrevLine"
+          @next-line="voiceReadPlayNextLine"
+          @regenerate="voiceReadRegenerateCurrentLine"
+          @stop="exitVoiceRead"
         />
         <div
           v-if="showReaderIdleHint"
@@ -2116,6 +2216,7 @@ useAppShellThemeWatch({
       :highlight-colors-dark="highlightColorsDark"
       :ebook-convert-output-dir="ebookConvertOutputDir"
       :character-portrait-cache-dir="characterPortraitCacheDir"
+      :voice-read-settings="voiceReadSettings"
       :ai-skills-enabled="aiSkillsEnabled"
       :ai-skill-overrides="aiSkillOverrides"
       :ai-custom-skills="aiCustomSkills"

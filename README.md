@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-还有章节识别、空行压缩、行首缩进、AI阅读助手等功能。
+还有章节识别、空行压缩、行首缩进、AI 阅读助手等功能。
 </p>
 
 <p align="center">
@@ -45,9 +45,10 @@
 - 支持**主题切换**：内置明亮和暗黑两种主题。
 - 支持多个窗口：可同时打开多个窗口。
 - **摸鱼快捷键**：摸鱼时可以快速隐藏阅读器。
-- **AI阅读助手**：可以让**AI**帮忙分析剧情，或者回答小说的相关问题。
-- **角色卡生成**：借助**AI**检索小说中角色的相关信息生成摘要，通过**文生图**生成角色立绘。
+- **AI阅读助手**：可以让 **AI** 帮忙分析剧情，或者回答小说的相关问题。
+- **角色卡生成**：借助 **AI** 检索小说中角色的相关信息生成摘要，通过**文生图**生成角色立绘。
 - **支持编辑模式**：方便对小说内容进行修改。
+- **语音朗读功能**：支持 EdgeTTS、系统语音和 DashScope 朗读。
 
 ### 关于「其他电子书格式」的支持
 
@@ -106,4 +107,4 @@
 - 使用 [font-list](https://github.com/oldj/node-font-list) 获取系统字体列表
 - 基于 [libmspack](https://github.com/kyz/libmspack) 移植了一套 JavaScript 实现，以支持对 `.chm` 格式的解析
 - 其他电子书格式的解析，主要参考 [foliate-js](https://github.com/johnfactotum/foliate-js) 的实现
-- AI 聊天助手的基础功能，主要参考了 [ReadAny](https://github.com/codedogQBY/ReadAny) 的实现
+- AI 聊天助手和语音朗读的基础功能，主要参考了 [ReadAny](https://github.com/codedogQBY/ReadAny) 的实现

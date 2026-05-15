@@ -88,6 +88,10 @@ import { joinFs } from "../ebook/pathUtils";
 import { resolveDefaultEbookConvertOutputDirSync } from "../utils/defaultCacheDirs";
 import type { AiCustomSkill, AiSkillUserOverride } from "@shared/aiSkills";
 import {
+  mergeVoiceReadSettings,
+  type VoiceReadSettings,
+} from "../constants/voiceRead";
+import {
   mergeAiCustomSkills,
   mergeAiSkillOverrides,
   mergeAiSkillsEnabled,
@@ -170,6 +174,7 @@ export function useAppPersistence(deps: {
   aiCustomSkills: Ref<AiCustomSkill[]>;
   aiAssistantDeepThinking: Ref<boolean>;
   aiAssistantSpoilerSafe: Ref<boolean>;
+  voiceReadSettings: Ref<VoiceReadSettings>;
 }) {
   const settingsLoaded = ref(false);
   let storageSyncBound = false;
@@ -775,6 +780,8 @@ export function useAppPersistence(deps: {
       deps.aiAssistantSpoilerSafe.value = data.aiAssistantSpoilerSafe;
     }
 
+    deps.voiceReadSettings.value = mergeVoiceReadSettings(data.voiceRead);
+
     return {
       ebookConvertOutputDirKeyPresent,
       characterPortraitCacheDirKeyPresent,
@@ -847,6 +854,7 @@ export function useAppPersistence(deps: {
           : undefined,
       aiAssistantDeepThinking: deps.aiAssistantDeepThinking.value,
       aiAssistantSpoilerSafe: deps.aiAssistantSpoilerSafe.value,
+      voiceRead: deps.voiceReadSettings.value,
     });
   }
 

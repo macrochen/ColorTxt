@@ -16,6 +16,7 @@ import SettingsAIPanel from "./SettingsAIPanel.vue";
 import SettingsVectorModelPanel from "./SettingsVectorModelPanel.vue";
 import SettingsTxt2ImgPanel from "./SettingsTxt2ImgPanel.vue";
 import SettingsSkillsPanel from "./SettingsSkillsPanel.vue";
+import SettingsVoiceReadPanel from "./SettingsVoiceReadPanel.vue";
 import {
   clampLineHeightMultipleForFontSize,
   defaultChapterMinCharCount,
@@ -39,6 +40,12 @@ import {
   resolveDefaultCharacterPortraitCacheDirSync,
   resolveDefaultEbookConvertOutputDirSync,
 } from "../utils/defaultCacheDirs";
+import type { VoiceReadSettings } from "../constants/voiceRead";
+import {
+  defaultVoiceReadSettings,
+  mergeVoiceReadSettings,
+  voiceReadDashScopeRequiresApiKey,
+} from "../constants/voiceRead";
 
 export type SettingsApplyPayload = {
   restoreSessionOnStartup: boolean;
@@ -56,6 +63,7 @@ export type SettingsApplyPayload = {
   aiSkillsEnabled: Record<string, boolean>;
   aiSkillOverrides: Record<string, AiSkillUserOverride>;
   aiCustomSkills: AiCustomSkill[];
+  voiceRead: VoiceReadSettings;
 };
 
 const modelValue = defineModel<boolean>({ default: false });
@@ -77,6 +85,7 @@ const props = defineProps<{
   aiSkillsEnabled: Record<string, boolean>;
   aiSkillOverrides: Record<string, AiSkillUserOverride>;
   aiCustomSkills: AiCustomSkill[];
+  voiceReadSettings: VoiceReadSettings;
 }>();
 
 const emit = defineEmits<{
@@ -122,6 +131,10 @@ const draftAiSkillOverrides = ref<Record<string, AiSkillUserOverride>>(
 );
 const draftAiCustomSkills = ref<AiCustomSkill[]>([]);
 
+const draftVoiceRead = ref<VoiceReadSettings>(
+  mergeVoiceReadSettings(undefined),
+);
+
 function syncDraftFromProps() {
   draftRestore.value = props.restoreSessionOnStartup;
   draftSyncCurrentFile.value = props.syncCurrentFile;
@@ -144,6 +157,7 @@ function syncDraftFromProps() {
     props.aiSkillsEnabled,
     draftAiCustomSkills.value.map((s) => s.id),
   );
+  draftVoiceRead.value = mergeVoiceReadSettings(props.voiceReadSettings);
 }
 
 async function syncAiFromMain() {
@@ -249,6 +263,12 @@ function resetSkillsDraft() {
   draftAiSkillsEnabled.value = mergeAiSkillsEnabled(undefined, []);
 }
 
+function resetVoiceReadDraft() {
+  draftVoiceRead.value = mergeVoiceReadSettings({
+    ...defaultVoiceReadSettings,
+  });
+}
+
 function onResetCurrentTab() {
   if (activeTab.value === "general") resetGeneralDraft();
   else if (activeTab.value === "reading") resetReadingDraft();
@@ -256,6 +276,7 @@ function onResetCurrentTab() {
   else if (activeTab.value === "vectorModel") resetVectorModelDraft();
   else if (activeTab.value === "txt2img") resetTxt2ImgDraft();
   else if (activeTab.value === "skills") resetSkillsDraft();
+  else if (activeTab.value === "voiceRead") resetVoiceReadDraft();
 }
 
 function onCancel() {
@@ -276,6 +297,11 @@ async function onConfirm() {
       noLink: true,
     });
     if (r.response !== 1) return;
+  }
+
+  if (voiceReadDashScopeRequiresApiKey(draftVoiceRead.value)) {
+    await appAlert("「语音朗读」DashScope 需要 API 密钥");
+    return;
   }
 
   const aiPayload = JSON.parse(
@@ -307,6 +333,7 @@ async function onConfirm() {
     ),
     aiSkillOverrides: mergeAiSkillOverrides(draftAiSkillOverrides.value),
     aiCustomSkills: mergeAiCustomSkills(draftAiCustomSkills.value),
+    voiceRead: mergeVoiceReadSettings(draftVoiceRead.value),
   });
 }
 
@@ -385,6 +412,11 @@ async function onClearCache() {
                 draftFullscreenReaderWidthPercent
               "
               :monaco-custom-highlight="monacoCustomHighlight"
+            />
+
+            <SettingsVoiceReadPanel
+              v-show="activeTab === 'voiceRead'"
+              v-model="draftVoiceRead"
             />
 
             <SettingsAIPanel v-show="activeTab === 'ai'" v-model="draftAi" />

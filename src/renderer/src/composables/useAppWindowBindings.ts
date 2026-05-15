@@ -125,6 +125,8 @@ export function useAppWindowBindings(deps: {
   handleWindowCloseRequest: () => Promise<void>;
   /** 为 true 时：焦点在阅读器 Monaco 内不处理窗口级快捷键与全屏 Esc，交给编辑器 */
   readerEditMode: Ref<boolean>;
+  /** 语音朗读播放中：禁用窗口级滚动/翻页快捷键 */
+  voiceReadScrollLocked?: Ref<boolean>;
 }) {
   const unsubscribers: Array<() => void> = [];
 
@@ -248,6 +250,7 @@ export function useAppWindowBindings(deps: {
         (ev) =>
           !hasModalOrEscBeforeModalLayer() &&
           !keyboardEventFromReaderSidebar(ev) &&
+          !deps.voiceReadScrollLocked?.value &&
           !(
             deps.readerEditMode.value &&
             keyboardTargetInsideReaderMonacoEditor(ev, deps.readerRef)

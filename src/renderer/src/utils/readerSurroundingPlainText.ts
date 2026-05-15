@@ -1,6 +1,5 @@
 import type { ReaderLinesSource } from "./currentChapterPlainText";
 
-/** 与 ReadAny `semantic-context.ts` 中 `truncateText(..., 500)` 同量级 */
 export const READER_SURROUNDING_DEFAULT_MAX_CHARS = 500;
 
 export type ReaderSurroundingSource = ReaderLinesSource & {

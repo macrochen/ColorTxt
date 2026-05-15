@@ -25,6 +25,7 @@ import {
   mergeAiSkillOverrides,
   mergeAiSkillsEnabled,
 } from "@shared/aiSkills";
+import type { VoiceReadSettings } from "../constants/voiceRead";
 
 export type PersistedSettingsData = {
   theme?: "vs" | "vs-dark";
@@ -98,6 +99,8 @@ export type PersistedSettingsData = {
    * 缺省时运行时使用 `userData/CharacterPortrait`（子目录名见 `@shared/characterPortraitPaths`）。
    */
   characterPortraitCacheDir?: string;
+  /** 语音朗读（引擎、音色、语速音调、DashScope Key） */
+  voiceRead?: Partial<VoiceReadSettings>;
 };
 
 export type PersistedSettingsLoadResult = {
@@ -310,6 +313,21 @@ export function loadPersistedSettingsData(
 
   if (typeof obj.characterPortraitCacheDir === "string") {
     data.characterPortraitCacheDir = obj.characterPortraitCacheDir.trim();
+  }
+
+  if (obj.voiceRead && typeof obj.voiceRead === "object") {
+    const vr = obj.voiceRead as Record<string, unknown>;
+    data.voiceRead = {
+      engine:
+        vr.engine === "edge" || vr.engine === "dashscope" || vr.engine === "system"
+          ? vr.engine
+          : undefined,
+      voiceId: typeof vr.voiceId === "string" ? vr.voiceId : undefined,
+      rate: typeof vr.rate === "number" ? vr.rate : undefined,
+      pitch: typeof vr.pitch === "number" ? vr.pitch : undefined,
+      dashscopeApiKey:
+        typeof vr.dashscopeApiKey === "string" ? vr.dashscopeApiKey : undefined,
+    };
   }
 
   return {

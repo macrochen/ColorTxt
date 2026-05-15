@@ -20,9 +20,13 @@ import {
   type PresetFontKey,
 } from "../utils/presetFontDefinitions";
 
-const props = defineProps<{
-  monacoFontFamily: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    monacoFontFamily: string;
+    disabled?: boolean;
+  }>(),
+  { disabled: false },
+);
 
 const emit = defineEmits<{
   setMonacoFont: [fontFamily: string];
@@ -166,6 +170,13 @@ watch(otherFontFilter, () => {
   });
 });
 
+watch(
+  () => props.disabled,
+  (locked) => {
+    if (locked) closeFontMenu();
+  },
+);
+
 const onPointerDown = (_ev: PointerEvent) => {
   if (!fontMenuOpen.value) return;
   const root = fontMenuRootEl.value;
@@ -192,6 +203,7 @@ onBeforeUnmount(() => {
       :pressed="fontMenuOpen"
       :title="fontPickerButtonTitle"
       aria-label="选择字体"
+      :disabled="disabled"
       @click.stop="toggleFontMenu"
     />
 

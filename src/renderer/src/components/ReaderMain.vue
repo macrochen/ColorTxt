@@ -46,6 +46,7 @@ import {
 import AppContextMenu from "./AppContextMenu.vue";
 import ReaderHighlightFloat from "./ReaderHighlightFloat.vue";
 import ReaderImageLightbox from "./ReaderImageLightbox.vue";
+import VoiceReadResumeGuide from "./VoiceReadResumeGuide.vue";
 import "./readerMainMonaco.css";
 import { getSelectionEndViewportAnchor } from "../reader/readerHighlightGeometry";
 import {
@@ -94,6 +95,10 @@ const chapterTitleDecorationsCollection =
   shallowRef<monaco.editor.IEditorDecorationsCollection | null>(null);
 const inlineSearchDecorationsCollection =
   shallowRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+const voiceReadDecorationsCollection =
+  shallowRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+/** 朗读高亮行（供上一行/下一行以「正在播的行」为锚点） */
+const voiceReadHighlightLine = ref<number | null>(null);
 const hlTipVisible = ref(false);
 const hlPickerVisible = ref(false);
 const hlFloatTop = ref(0);
@@ -119,8 +124,13 @@ const ebookInternalLinkHits = shallowRef<EbookLinkHit[]>([]);
 /** 选区靠近阅读区上缘时为 true：笔尖与色盘改为在选区下方展开 */
 const hlFloatOpenDownward = ref(false);
 
+const voiceReadScrollLocked = computed(
+  () => props.voiceReadScrollLocked === true,
+);
+
 let removeHlGlobalListeners: (() => void) | null = null;
 let unsubModalStack: (() => void) | null = null;
+let removeVoiceReadKeyCapture: (() => void) | null = null;
 const builtInThemes = new Set(["vs", "vs-dark"]);
 /** 行高 = round(fontSize * multiple)，由 App 持久化并同步 */
 let lineHeightMultiple = defaultReaderLineHeightMultiple;
@@ -176,6 +186,12 @@ const props = withDefaults(
     ebookDisplayLineToPhysical?: (displayLine: number) => number;
     /** 在**打开**查找栏（非关闭）之前调用，例如自动点亮书钉 */
     beforeRevealFindWidget?: () => void;
+    /** 语音朗读播放中：禁止打开查找栏 */
+    voiceReadBlocksFind?: boolean;
+    /** 语音朗读播放中：禁止用户滚动（遮罩 + 滚轮拦截） */
+    voiceReadScrollLocked?: boolean;
+    /** 语音朗读已暂停：显示视口中心开播指引线 */
+    voiceReadPaused?: boolean;
     /** 编辑模式：Monaco 展示磁盘原文，不经阅读管线后处理 */
     readerEditMode?: boolean;
     /** 与流式读盘一致的磁盘 txt 路径（编辑读/存用） */
@@ -196,6 +212,9 @@ const props = withDefaults(
     ebookAnchorPhysicalToDisplay: undefined,
     ebookDisplayLineToPhysical: undefined,
     beforeRevealFindWidget: undefined,
+    voiceReadBlocksFind: false,
+    voiceReadScrollLocked: false,
+    voiceReadPaused: false,
     readerEditMode: false,
     physicalReaderPath: null,
   },
@@ -212,6 +231,7 @@ const emit = defineEmits<{
   readerEditLoaded: [payload: { encoding: string }];
   readerEditLoadFailed: [];
   readerEditSaveRequest: [];
+  voiceReadResume: [];
 }>();
 
 let readerEditSavedSnapshot = "";
@@ -878,6 +898,7 @@ function clear(opts?: ReaderClearOptions) {
   const prevModel = model.value;
   chapterTitleDecorationsCollection.value?.clear();
   inlineSearch.clearInlineSearchState();
+  voiceReadDecorationsCollection.value?.clear();
 
   e?.updateOptions({ stickyScroll: { enabled: false } });
 
@@ -888,6 +909,7 @@ function clear(opts?: ReaderClearOptions) {
     model.value = next;
     chapterTitleDecorationsCollection.value = e.createDecorationsCollection();
     inlineSearchDecorationsCollection.value = e.createDecorationsCollection();
+    voiceReadDecorationsCollection.value = e.createDecorationsCollection();
     e.setPosition({ lineNumber: 1, column: 1 });
     e.setScrollTop(0);
     e.layout();
@@ -1094,6 +1116,104 @@ function jumpToLineCentered(lineNumber: number, smooth = true) {
   e.focus();
 }
 
+/** 语音朗读：自动换行块垂直居中滚动（不写光标位置、不抢焦点，避免只读模式出现闪烁 caret） */
+function scrollModelLineBlockToViewportCenter(
+  lineNumber: number,
+  smooth = true,
+) {
+  const e = editor.value;
+  const m = model.value;
+  if (!e || !m) return;
+  beginProgrammaticScroll();
+  const lineCount = m.getLineCount();
+  const line = Math.max(
+    1,
+    Math.min(Math.floor(lineNumber), Math.max(1, lineCount)),
+  );
+  const scrollType = monacoScrollType(smooth);
+  e.layout();
+  const top = e.getTopForLineNumber(line);
+  const bottom = e.getBottomForLineNumber(line);
+  const blockCenter = (top + bottom) / 2;
+  const layoutH = Math.max(1, e.getLayoutInfo().height);
+  const maxTop = Math.max(0, e.getScrollHeight() - layoutH);
+  const targetTop = Math.max(0, Math.min(maxTop, blockCenter - layoutH / 2));
+  e.setScrollTop(targetTop, scrollType);
+}
+
+/** 视口内容区垂直中心对应的模型行（与暂停指引横线、{@link scrollModelLineBlockToViewportCenter} 同一套滚动坐标） */
+function getModelLineAtViewportCenter(): number {
+  const e = editor.value;
+  const m = model.value;
+  if (!e || !m) return 1;
+  e.layout();
+  const layout = e.getLayoutInfo();
+  const layoutH = Math.max(1, layout.height);
+  const targetY = Math.max(0, e.getScrollTop()) + layoutH / 2;
+  const lc = Math.max(1, m.getLineCount());
+
+  let lo = 1;
+  let hi = lc;
+  let seed = 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const top = e.getTopForLineNumber(mid);
+    if (!Number.isFinite(top)) break;
+    if (top <= targetY) {
+      seed = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  let best = seed;
+  let bestDist = Infinity;
+  const from = Math.max(1, seed - 1);
+  const to = Math.min(lc, seed + 1);
+  for (let line = from; line <= to; line++) {
+    const top = e.getTopForLineNumber(line);
+    const bottom = e.getBottomForLineNumber(line);
+    if (!Number.isFinite(top) || !Number.isFinite(bottom)) continue;
+    const dist = Math.abs((top + bottom) / 2 - targetY);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = line;
+    }
+  }
+  return best;
+}
+
+function getViewportStartModelLine(): number {
+  const e = editor.value;
+  if (!e) return 1;
+  const r = e.getVisibleRanges()[0];
+  return r ? Math.max(1, r.startLineNumber) : 1;
+}
+
+function setVoiceReadLineHighlight(lineNumber: number | null) {
+  const col = voiceReadDecorationsCollection.value;
+  const m = model.value;
+  if (!col || !m) return;
+  if (lineNumber == null || !Number.isFinite(lineNumber)) {
+    voiceReadHighlightLine.value = null;
+    col.clear();
+    return;
+  }
+  const line = Math.max(1, Math.min(Math.floor(lineNumber), m.getLineCount()));
+  voiceReadHighlightLine.value = line;
+  col.set([
+    {
+      range: new monaco.Range(line, 1, line, m.getLineMaxColumn(line)),
+      options: {
+        isWholeLine: true,
+        className: "readerVoiceReadCurrentLine",
+        linesDecorationsClassName: "readerVoiceReadCurrentLineDecor",
+      },
+    },
+  ]);
+}
+
 function suppressHighlightTipForProgrammaticSelection() {
   suppressHighlightTipUntilMs = Date.now() + 300;
   closeHighlightFloatUi();
@@ -1247,6 +1367,7 @@ function onEditorContextMenuSelect(id: string) {
 const FIND_CONTROLLER_ID = "editor.contrib.findController";
 
 function toggleFindWidget() {
+  if (props.voiceReadBlocksFind) return;
   const e = editor.value;
   if (!e) return;
   const findCtrl = e.getContribution(FIND_CONTROLLER_ID) as {
@@ -1309,6 +1430,7 @@ function openFindWithSearchString(raw: string) {
 }
 
 async function openFindWithSearchStringAsync(raw: string) {
+  if (props.voiceReadBlocksFind) return;
   const e = editor.value;
   const term = raw.trim();
   if (!e || !term) return;
@@ -1573,6 +1695,11 @@ defineExpose({
   scrollToDocumentStart,
   jumpToLine,
   jumpToLineCentered,
+  scrollModelLineBlockToViewportCenter,
+  getModelLineAtViewportCenter,
+  getViewportStartModelLine,
+  setVoiceReadLineHighlight,
+  getVoiceReadHighlightedLine: () => voiceReadHighlightLine.value,
   jumpToSearchMatchCentered: inlineSearch.jumpToSearchMatchCentered,
   jumpToNextInlineSearchMatch: inlineSearch.jumpToNextInlineSearchMatch,
   hasInlineSearchQuery: inlineSearch.hasInlineSearchQuery,
@@ -1655,7 +1782,8 @@ onMounted(() => {
       () => chaptersSnapshot,
     );
     providersDisposables.push(chapterSticky.disposable);
-    notifyChapterStickyFoldingRanges = chapterSticky.notifyChapterFoldingRangesChanged;
+    notifyChapterStickyFoldingRanges =
+      chapterSticky.notifyChapterFoldingRangesChanged;
 
     g[globalKey] = true;
   }
@@ -1698,6 +1826,8 @@ onMounted(() => {
     editor.value.createDecorationsCollection();
   inlineSearchDecorationsCollection.value =
     editor.value.createDecorationsCollection();
+  voiceReadDecorationsCollection.value =
+    editor.value.createDecorationsCollection();
 
   const e = editor.value;
   if (e) {
@@ -1724,8 +1854,12 @@ onMounted(() => {
       }
     });
     const d3 = installReaderScrollKeyHandler(monaco, e, {
-      onSpacePageDown: () => scrollByPageStep(1),
-      shouldInterceptReadOnlyKeys: () => !props.readerEditMode,
+      onSpacePageDown: () => {
+        if (props.voiceReadScrollLocked) return;
+        scrollByPageStep(1);
+      },
+      shouldInterceptReadOnlyKeys: () =>
+        !props.readerEditMode && !props.voiceReadScrollLocked,
     });
     const d4 = e.onContextMenu((mouseEv) => {
       const m = model.value;
@@ -1819,6 +1953,8 @@ onBeforeUnmount(() => {
   removeHlGlobalListeners = null;
   unsubModalStack?.();
   unsubModalStack = null;
+  removeVoiceReadKeyCapture?.();
+  removeVoiceReadKeyCapture = null;
   editor.value?.dispose();
   model.value?.dispose();
   for (const d of providersDisposables) d.dispose();
@@ -1860,6 +1996,37 @@ watch(
   },
 );
 
+watch(
+  () => props.voiceReadScrollLocked,
+  (locked) => {
+    removeVoiceReadKeyCapture?.();
+    removeVoiceReadKeyCapture = null;
+    if (!locked) return;
+    const onKey = (ev: KeyboardEvent) => {
+      const root = editor.value?.getDomNode();
+      if (!root) return;
+      const t = ev.target;
+      if (!(t instanceof Node) || !root.contains(t)) return;
+      const k = ev.key;
+      if (
+        k === "ArrowUp" ||
+        k === "ArrowDown" ||
+        k === "PageUp" ||
+        k === "PageDown" ||
+        k === " " ||
+        k === "Home" ||
+        k === "End"
+      ) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    removeVoiceReadKeyCapture = () =>
+      document.removeEventListener("keydown", onKey, true);
+  },
+);
+
 onMounted(() => {
   unsubModalStack = subscribeModalStackChange(() => {
     if (!hlTipVisible.value && !hlPickerVisible.value) return;
@@ -1872,7 +2039,19 @@ onMounted(() => {
 
 <template>
   <main class="content" :class="{ 'content--readerEdit': readerEditMode }">
-    <div ref="editorEl" class="editorHost"></div>
+    <div class="editorShell">
+      <div ref="editorEl" class="editorHost"></div>
+      <div
+        v-if="voiceReadScrollLocked"
+        class="voiceReadScrollBlocker"
+        aria-hidden="true"
+        @wheel.prevent.stop
+      />
+      <VoiceReadResumeGuide
+        :visible="voiceReadPaused === true"
+        @resume="emit('voiceReadResume')"
+      />
+    </div>
     <div
       v-if="hlTipVisible || hlPickerVisible"
       ref="hlFloatRootRef"
@@ -1916,6 +2095,20 @@ onMounted(() => {
   overflow: hidden;
   min-height: 0;
   user-select: text;
+}
+
+.editorShell {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+.voiceReadScrollBlocker {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  cursor: default;
 }
 
 .editorHost {

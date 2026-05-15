@@ -120,6 +120,18 @@
   flex-direction: column;
 }
 
+.readerPane {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.readerPaneWrap > .voiceReadToolbarLayer {
+  z-index: 100;
+}
+
 .readerDropOverlay {
   position: absolute;
   inset: 0;
@@ -151,13 +163,6 @@
 .readerDropOverlay-enter-from,
 .readerDropOverlay-leave-to {
   opacity: 0;
-}
-
-.readerPane {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
 }
 
 .readerIdleHint {

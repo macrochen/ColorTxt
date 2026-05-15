@@ -65,8 +65,17 @@
   background: color-mix(in srgb, var(--search-hit-bg) 26%, transparent);
 }
 
+.monaco-editor .readerVoiceReadCurrentLine {
+  background: color-mix(in srgb, var(--search-hit-bg) 26%, transparent);
+}
+
 .monaco-editor .margin-view-overlays .readerInlineSearchCurrentLineDecor,
 .monaco-editor .margin .readerInlineSearchCurrentLineDecor {
+  background: color-mix(in srgb, var(--search-hit-bg) 26%, transparent);
+}
+
+.monaco-editor .margin-view-overlays .readerVoiceReadCurrentLineDecor,
+.monaco-editor .margin .readerVoiceReadCurrentLineDecor {
   background: color-mix(in srgb, var(--search-hit-bg) 26%, transparent);
 }
 
