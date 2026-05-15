@@ -39,6 +39,11 @@ const props = defineProps<{
   chapterRules: ChapterMatchRule[];
   chapterRuleErrorText: string;
   editingBookmarkLine: number | null;
+  /** 添加/编辑书签弹窗：在备注框上方展示的章节名与正文预览（与侧栏书签列表逻辑一致） */
+  addBookmarkDialogPreview: {
+    chapterTitle?: string;
+    content: string;
+  } | null;
   activeBookmarkInViewport: FileBookmarkItem | null;
   dirListScanning: boolean;
   dirListCurrentName: string;
@@ -206,6 +211,25 @@ onBeforeUnmount(() => {
     max-width="480px"
   >
     <div class="bookmarkModalBody">
+      <div v-if="addBookmarkDialogPreview" class="bookmarkModalPreview">
+        <div
+          v-if="addBookmarkDialogPreview.chapterTitle"
+          class="bookmarkModalChapter"
+          :title="addBookmarkDialogPreview.chapterTitle"
+        >
+          {{ addBookmarkDialogPreview.chapterTitle }}
+        </div>
+        <div
+          class="bookmarkModalExcerpt"
+          :class="{
+            bookmarkModalExcerptPlaceholder:
+              !addBookmarkDialogPreview.content.trim(),
+          }"
+          :title="addBookmarkDialogPreview.content.trim() || undefined"
+        >
+          {{ addBookmarkDialogPreview.content.trim() || "（空行）" }}
+        </div>
+      </div>
       <textarea
         :ref="bindBookmarkInput"
         v-model="bookmarkNoteInput"
@@ -307,6 +331,48 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+}
+
+.bookmarkModalPreview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+  color: var(--list-item-fg);
+}
+
+.bookmarkModalChapter {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  opacity: 0.78;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  width: 100%;
+  color: var(--list-item-fg);
+}
+
+.bookmarkModalExcerpt {
+  margin: 0;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.35;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--list-item-fg);
+}
+
+.bookmarkModalExcerpt.bookmarkModalExcerptPlaceholder {
+  opacity: 0.42;
 }
 
 .bookmarkModalText {

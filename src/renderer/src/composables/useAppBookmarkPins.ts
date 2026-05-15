@@ -1,6 +1,8 @@
 import { computed, nextTick, ref, watch, type Ref } from "vue";
 import type ReaderMain from "../components/ReaderMain.vue";
+import type { Chapter } from "../chapter";
 import { APP_DISPLAY_NAME } from "../constants/appUi";
+import { pickActiveChapterIdx } from "../reader/chapterIndex";
 import {
   findFileMetaRecord,
   type FileBookmarkItem,
@@ -28,6 +30,7 @@ export function useAppBookmarkPins(deps: {
   upsertBookmark: (path: string, line: number, note: string) => void;
   removeBookmark: (path: string, line: number) => void;
   clearBookmarks: (path: string) => void;
+  chapters: Ref<readonly Chapter[]>;
 }) {
   const pinnedScrollTop = ref<number | null>(null);
   const pinActive = computed(() => pinnedScrollTop.value !== null);
@@ -116,6 +119,18 @@ export function useAppBookmarkPins(deps: {
     return "";
   }
 
+  function resolveBookmarkChapterTitle(storedLine: number): string | undefined {
+    const list = deps.chapters.value;
+    if (list.length === 0) return undefined;
+    const displayLine = deps.readerEditMode.value
+      ? Math.max(1, Math.floor(storedLine))
+      : deps.stream.physicalLineToDisplayForReader(storedLine);
+    const idx = pickActiveChapterIdx(list, displayLine);
+    if (idx < 0) return undefined;
+    const t = list[idx]?.title?.trim();
+    return t ? t : undefined;
+  }
+
   const bookmarkListItems = computed(() =>
     currentFileBookmarks.value.map((it) => {
       const _tick = deps.totalLineCount.value;
@@ -124,10 +139,10 @@ export function useAppBookmarkPins(deps: {
         line: it.line,
         note: it.note,
         content: resolveBookmarkPreviewContent(it.line),
+        chapterTitle: resolveBookmarkChapterTitle(it.line),
       };
     }),
   );
-
   watch(activeBookmarkLine, (line, prev) => {
     if (line == null || line === prev) return;
     if (deps.sidebarTab.value === "bookmarks") deps.pulseBookmarkListCenter();
@@ -174,10 +189,37 @@ export function useAppBookmarkPins(deps: {
     removeBookmarkOpen.value = false;
   }
 
+  /** 添加/编辑书签弹窗与 `confirmAddBookmark` 使用的行号（阅读模式为物理行，编辑模式为显示行）。 */
+  function getPendingBookmarkSaveLine(): number {
+    if (editingBookmarkLine.value != null) return editingBookmarkLine.value;
+    const anchor =
+      deps.readerRef.value?.getBookmarkSaveAnchorDisplayLine?.() ?? null;
+    if (typeof anchor === "number" && Number.isFinite(anchor)) {
+      const displayLine = Math.max(1, Math.floor(anchor));
+      return deps.readerEditMode.value
+        ? displayLine
+        : deps.stream.viewportDisplayLineToPhysicalLine(displayLine);
+    }
+    return viewportTopPhysicalLine.value;
+  }
+
+  const addBookmarkDialogPreview = computed(() => {
+    if (!addBookmarkOpen.value) return null;
+    void deps.totalLineCount.value;
+    void deps.lastProbeLine.value;
+    void deps.chapters.value;
+    void deps.readerEditMode.value;
+    const line = getPendingBookmarkSaveLine();
+    return {
+      chapterTitle: resolveBookmarkChapterTitle(line),
+      content: resolveBookmarkPreviewContent(line),
+    };
+  });
+
   function confirmAddBookmark() {
     const path = deps.currentFile.value;
     if (!path) return;
-    const line = editingBookmarkLine.value ?? viewportTopPhysicalLine.value;
+    const line = getPendingBookmarkSaveLine();
     const note = bookmarkNoteInput.value.replace(/\r?\n/g, " ").trim();
     deps.upsertBookmark(path, line, note);
     editingBookmarkLine.value = null;
@@ -256,6 +298,7 @@ export function useAppBookmarkPins(deps: {
     activeBookmarkLine,
     bookmarkActive,
     bookmarkListItems,
+    addBookmarkDialogPreview,
     onPinClick,
     ensurePinBeforeRevealFindWidget,
     onGoBackFromPin,

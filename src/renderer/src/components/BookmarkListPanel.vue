@@ -4,7 +4,12 @@ import AppContextMenu from "./AppContextMenu.vue";
 import VirtualList from "./VirtualList.vue";
 import { READER_SIDEBAR_ROW_STRIDE } from "../composables/useReaderSidebarLists";
 
-type BookmarkListItem = { line: number; note?: string; content: string };
+type BookmarkListItem = {
+  line: number;
+  note?: string;
+  content: string;
+  chapterTitle?: string;
+};
 
 const props = defineProps<{
   currentFilePath: string | null;
@@ -77,7 +82,7 @@ function onContextMenuSelect(actionId: string) {
           :ref="onBindListRef"
           class="sidebarList sidebarList--itemGap"
           :item-count="sortedBookmarks.length"
-          :row-stride="READER_SIDEBAR_ROW_STRIDE * 1.6"
+          :row-stride="READER_SIDEBAR_ROW_STRIDE * 2"
           :overscan="8"
           :item-key="(i) => sortedBookmarks[i]?.line ?? i"
         >
@@ -94,23 +99,36 @@ function onContextMenuSelect(actionId: string) {
             >
               <span class="bookmarkMain">
                 <span
+                  v-if="
+                    sortedBookmarks[index].note?.trim() ||
+                    !sortedBookmarks[index].chapterTitle
+                  "
                   class="bookmarkNote"
                   :class="{
-                    bookmarkPlaceholder: !sortedBookmarks[index].note,
+                    bookmarkPlaceholder:
+                      !sortedBookmarks[index].note?.trim() &&
+                      !sortedBookmarks[index].chapterTitle,
                   }"
-                  :title="sortedBookmarks[index].note || undefined"
+                  :title="sortedBookmarks[index].note?.trim() || undefined"
                 >
-                  {{ sortedBookmarks[index].note || "无备注" }}
+                  {{
+                    sortedBookmarks[index].note?.trim() ||
+                    (!sortedBookmarks[index].chapterTitle ? "无备注" : "")
+                  }}
+                </span>
+                <span
+                  v-if="sortedBookmarks[index].chapterTitle"
+                  class="bookmarkChapter"
+                  :title="sortedBookmarks[index].chapterTitle"
+                >
+                  {{ sortedBookmarks[index].chapterTitle }}
                 </span>
                 <span
                   class="bookmarkContent"
                   :class="{
-                    bookmarkPlaceholder:
-                      !sortedBookmarks[index].content.trim(),
+                    bookmarkPlaceholder: !sortedBookmarks[index].content.trim(),
                   }"
-                  :title="
-                    sortedBookmarks[index].content.trim() || undefined
-                  "
+                  :title="sortedBookmarks[index].content.trim() || undefined"
                 >
                   {{ sortedBookmarks[index].content.trim() || "（空行）" }}
                 </span>
@@ -134,15 +152,18 @@ function onContextMenuSelect(actionId: string) {
         清空
       </button>
     </div>
-    <AppContextMenu
-      :open="contextMenuOpen"
-      :x="contextMenuX"
-      :y="contextMenuY"
-      :items="contextMenuItems"
-      :min-width="140"
-      @close="closeContextMenu"
-      @select="onContextMenuSelect"
-    />
+    <Teleport to="body">
+      <AppContextMenu
+        data-fullscreen-sidebar-float
+        :open="contextMenuOpen"
+        :x="contextMenuX"
+        :y="contextMenuY"
+        :items="contextMenuItems"
+        :min-width="140"
+        @close="closeContextMenu"
+        @select="onContextMenuSelect"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -201,12 +222,25 @@ function onContextMenuSelect(actionId: string) {
 .bookmarkNote {
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.bookmarkChapter {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  opacity: 0.78;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--list-item-fg);
+}
 .bookmarkContent {
-  font-size: 12px;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.35;
   opacity: 0.7;
   overflow: hidden;
   text-overflow: ellipsis;

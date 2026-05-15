@@ -261,7 +261,7 @@ const emit = defineEmits<{
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-shrink: 0;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
   padding: 10px;

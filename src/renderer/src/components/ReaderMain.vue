@@ -1134,6 +1134,36 @@ function jumpToBookmarkLine(lineNumber: number, smooth = true) {
 }
 
 /**
+ * 与 {@link jumpToBookmarkLine} 对齐：当前滚动下，视口内容区上沿往下约「一行字高」处的逻辑行（Monaco 显示行号）。
+ * 用于保存书签，使「记下的一行」与从书签列表跳回后光标所在行一致。
+ */
+function getBookmarkSaveAnchorDisplayLine(): number | null {
+  const e = editor.value;
+  const m = model.value;
+  if (!e || !m) return null;
+  e.layout();
+  const lineHeightPx = e.getOption(monaco.editor.EditorOption.lineHeight);
+  const scrollTop = Math.max(0, e.getScrollTop());
+  const targetY = scrollTop + lineHeightPx;
+  const lc = Math.max(1, m.getLineCount());
+  let lo = 1;
+  let hi = lc;
+  let ans = 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const top = e.getTopForLineNumber(mid);
+    if (!Number.isFinite(top)) return null;
+    if (top <= targetY) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return Math.max(1, Math.min(ans, lc));
+}
+
+/**
  * 视口内首行（Monaco 显示行号，1-based）。
  * 用于 `viewportDisplayLineToPhysicalLine`：滤空时必须为真实显示行，不得 +1，否则物理行号会错位。
  */
@@ -1547,6 +1577,7 @@ defineExpose({
   jumpToNextInlineSearchMatch: inlineSearch.jumpToNextInlineSearchMatch,
   hasInlineSearchQuery: inlineSearch.hasInlineSearchQuery,
   jumpToBookmarkLine,
+  getBookmarkSaveAnchorDisplayLine,
   setInlineSearchState: inlineSearch.setInlineSearchState,
   clearInlineSearchState: inlineSearch.clearInlineSearchState,
   emitProbeLine,

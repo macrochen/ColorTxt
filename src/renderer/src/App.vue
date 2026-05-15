@@ -904,6 +904,7 @@ const {
   activeBookmarkLine,
   bookmarkActive,
   bookmarkListItems,
+  addBookmarkDialogPreview,
   onPinClick,
   ensurePinBeforeRevealFindWidget,
   onGoBackFromPin,
@@ -930,6 +931,7 @@ const {
   upsertBookmark,
   removeBookmark,
   clearBookmarks,
+  chapters,
 });
 
 provide(bookmarkNoteInputRefKey, bookmarkNoteInputRef);
@@ -2097,6 +2099,7 @@ useAppShellThemeWatch({
       :chapter-rules="chapterRuleState.rules"
       :chapter-rule-error-text="chapterRuleErrorText"
       :editing-bookmark-line="editingBookmarkLine"
+      :add-bookmark-dialog-preview="addBookmarkDialogPreview"
       :active-bookmark-in-viewport="activeBookmarkInViewport"
       :dir-list-scanning="dirListScanning"
       :dir-list-current-name="dirListCurrentName"
