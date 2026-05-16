@@ -98,6 +98,10 @@
 
 见 [开发文档](./DOCS.md)
 
+## 更新日志
+
+见 [更新日志](./CHANGELOG.md)
+
 ## 相关
 
 - 应用图标由 [豆包](https://www.doubao.com/) 生成
