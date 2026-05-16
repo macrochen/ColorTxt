@@ -101,3 +101,8 @@
   border: 1px solid var(--vscode-editorHoverWidget-border) !important;
   border-radius: 3px !important;
 } */
+
+.monaco-editor .find-widget .button {
+  width: 22px;
+  height: 22px;
+}
