@@ -1174,9 +1174,14 @@ afterStreamFullTextInstalled = async () => {
 
 /** 视口已按物理行恢复且 probe 已更新后：重算章节并居中侧栏（加载结束等） */
 async function syncChaptersAfterViewportSettled() {
-  chapterNav.refreshChapterListFromReader();
-  await nextTick();
-  await readerSidebarRef.value?.centerActiveChapterInList?.(false);
+  try {
+    chapterNav.refreshChapterListFromReader();
+    await nextTick();
+    await readerSidebarRef.value?.centerActiveChapterInList?.(false);
+  } finally {
+    // 退出编辑后 openFilePath 会保持 suppress 直至流式加载结束；此处解除以恢复滚动换章居中
+    suppressChapterListAutoScroll.value = false;
+  }
 }
 
 const {
@@ -1943,6 +1948,7 @@ useAppWindowBindings({
   pendingRestoreViewportTopPhysicalLine,
   compressBlankLines,
   suppressFileListCenterAfterLoad,
+  suppressChapterListAutoScroll,
   txtFiles,
   sidebarTab,
   currentFile,

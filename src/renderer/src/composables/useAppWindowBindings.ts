@@ -93,6 +93,7 @@ export function useAppWindowBindings(deps: {
   pendingRestoreViewportTopPhysicalLine: Ref<number | null>;
   compressBlankLines: Ref<boolean>;
   suppressFileListCenterAfterLoad: Ref<boolean>;
+  suppressChapterListAutoScroll: Ref<boolean>;
   txtFiles: Ref<Array<{ name: string; path: string; size: number }>>;
   sidebarTab: Ref<import("../constants/readerSidebarTab").ReaderSidebarTab>;
   currentFile: Ref<string | null>;
@@ -474,6 +475,7 @@ export function useAppWindowBindings(deps: {
         deps.pendingRestoreEditorViewState.value = null;
         deps.pendingRestoreViewportTopPhysicalLine.value = null;
         deps.suppressFileListCenterAfterLoad.value = false;
+        deps.suppressChapterListAutoScroll.value = false;
         deps.readingProgressSynced.value = true;
         void appAlert(`读取失败：${e.message}`);
       }),
