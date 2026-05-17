@@ -63,13 +63,13 @@ const props = withDefaults(
       physicalLine: number;
       displayLine: number;
       text: string;
-      ranges: Array<{ start: number; end: number }>;
+      range: { start: number; end: number };
     }>;
     searchInProgress?: boolean;
     searchMatchCase?: boolean;
     searchWholeWord?: boolean;
     searchUseRegex?: boolean;
-    activeSearchResultPhysicalLine?: number | null;
+    activeSearchResult?: { physicalLine: number; rangeStart: number } | null;
     hasInlineSearchHighlight?: boolean;
     highlightPreviewBg?: string;
     monacoFontFamily?: string;
@@ -140,7 +140,7 @@ const props = withDefaults(
     searchMatchCase: false,
     searchWholeWord: false,
     searchUseRegex: false,
-    activeSearchResultPhysicalLine: null,
+    activeSearchResult: null,
     hasInlineSearchHighlight: false,
     highlightPreviewBg: "var(--reader-bg, var(--bg))",
     monacoFontFamily: "",
@@ -219,7 +219,7 @@ const emit = defineEmits<{
       physicalLine: number;
       displayLine: number;
       text: string;
-      ranges: Array<{ start: number; end: number }>;
+      range: { start: number; end: number };
     },
   ];
   characterFileMetaPatch: [
@@ -760,7 +760,7 @@ defineExpose({
         :match-case="searchMatchCase ?? false"
         :whole-word="searchWholeWord ?? false"
         :use-regex="searchUseRegex ?? false"
-        :active-physical-line="activeSearchResultPhysicalLine ?? null"
+        :active-search-result="activeSearchResult ?? null"
         @update:query="emit('update:searchQuery', $event)"
         @update:match-case="emit('update:searchMatchCase', $event)"
         @update:whole-word="emit('update:searchWholeWord', $event)"

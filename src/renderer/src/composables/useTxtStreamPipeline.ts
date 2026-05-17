@@ -1,5 +1,8 @@
 import { nextTick, type Ref } from "vue";
-import { applyLeadIndentFullWidth } from "../chapter";
+import {
+  applyLeadIndentFullWidth,
+  physicalRangeToDisplayColumns,
+} from "../chapter";
 import type ReaderMain from "../components/ReaderMain.vue";
 import {
   physicalLineToFilteredDisplayLine,
@@ -248,6 +251,22 @@ export function useTxtStreamPipeline(deps: {
     return physicalLineContents[idx] ?? "";
   }
 
+  /** 侧栏搜索等在物理行上的匹配 → Monaco 展示行列号 */
+  function physicalSearchRangeToDisplayColumns(
+    physicalLine: number,
+    range: { start: number; end: number },
+  ): { startColumn: number; endColumn: number } {
+    const raw = getPhysicalLineContent(physicalLine);
+    // 编辑态 Monaco 为磁盘原文，无压缩空行/行首缩进展示处理
+    if (deps.readerEditMode.value || !deps.leadIndentFullWidth.value) {
+      return {
+        startColumn: range.start + 1,
+        endColumn: Math.max(range.start + 2, range.end + 1),
+      };
+    }
+    return physicalRangeToDisplayColumns(raw, range);
+  }
+
   function getPhysicalFilePlainText(): string {
     if (physicalLineContents.length === 0) return "";
     return physicalLineContents.join("\n");
@@ -285,6 +304,7 @@ export function useTxtStreamPipeline(deps: {
     getPhysicalLineCount,
     getLineCount,
     getPhysicalLineContent,
+    physicalSearchRangeToDisplayColumns,
     getPhysicalFilePlainText,
     resyncMirrorFromReader,
     removeFilteredDisplayLinesAtOriginalIndices,

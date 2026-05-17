@@ -305,12 +305,26 @@ type SidebarSearchResult = {
   physicalLine: number;
   displayLine: number;
   text: string;
-  ranges: Array<{ start: number; end: number }>;
+  /** 该行内单次匹配（同一行多次匹配各占一条结果） */
+  range: { start: number; end: number };
 };
+
+function isSameSidebarSearchResult(
+  item: SidebarSearchResult,
+  active: { physicalLine: number; rangeStart: number },
+): boolean {
+  return (
+    item.physicalLine === active.physicalLine &&
+    item.range.start === active.rangeStart
+  );
+}
 const searchQuery = ref("");
 const searchResults = ref<SidebarSearchResult[]>([]);
 const searchInProgress = ref(false);
-const activeSearchResultPhysicalLine = ref<number | null>(null);
+const activeSearchResult = ref<{
+  physicalLine: number;
+  rangeStart: number;
+} | null>(null);
 const hasInlineSearchHighlight = ref(false);
 const searchMatchCase = ref(false);
 const searchWholeWord = ref(false);
@@ -1342,6 +1356,9 @@ function onReaderEditLoaded(payload: { encoding: string }) {
   );
   pendingReaderEditRestorePhysicalLine.value = null;
   stream.resyncMirrorFromReader();
+  if (searchQuery.value.trim()) {
+    scheduleSidebarSearch();
+  }
   try {
     chapterNav.refreshChapterListFromReader();
   } finally {
@@ -1351,6 +1368,9 @@ function onReaderEditLoaded(payload: { encoding: string }) {
 
 function onReaderEditContentChange() {
   stream.resyncMirrorFromReader();
+  if (readerEditMode.value && searchQuery.value.trim()) {
+    scheduleSidebarSearch();
+  }
 }
 
 function onReaderEditLoadFailed() {
@@ -1570,7 +1590,7 @@ function clearSidebarSearchState() {
   searchQuery.value = "";
   searchResults.value = [];
   searchInProgress.value = false;
-  activeSearchResultPhysicalLine.value = null;
+  activeSearchResult.value = null;
   searchRunToken += 1;
   if (searchDebounceTimer) {
     clearTimeout(searchDebounceTimer);
@@ -1669,19 +1689,23 @@ function runSidebarSearch(token: number) {
       : collectPlainRanges(text, q, caseSensitive, wholeWord);
     if (ranges == null) {
       searchResults.value = [];
-      activeSearchResultPhysicalLine.value = null;
+      activeSearchResult.value = null;
       searchInProgress.value = false;
       return;
     }
     if (ranges.length === 0) continue;
-    next.push({
-      physicalLine: line,
-      displayLine: readerEditMode.value
-        ? line
-        : stream.physicalLineToDisplayForReader(line),
-      text,
-      ranges,
-    });
+    const displayLine = readerEditMode.value
+      ? line
+      : stream.physicalLineToDisplayForReader(line);
+    for (const range of ranges) {
+      next.push({
+        physicalLine: line,
+        displayLine,
+        text,
+        range,
+      });
+      if (next.length >= SEARCH_RESULT_LIMIT) break;
+    }
     if (next.length >= SEARCH_RESULT_LIMIT) break;
   }
   if (token !== searchRunToken) return;
@@ -1693,10 +1717,10 @@ function runSidebarSearch(token: number) {
   });
   hasInlineSearchHighlight.value = next.length > 0;
   if (
-    activeSearchResultPhysicalLine.value != null &&
-    !next.some((it) => it.physicalLine === activeSearchResultPhysicalLine.value)
+    activeSearchResult.value != null &&
+    !next.some((it) => isSameSidebarSearchResult(it, activeSearchResult.value!))
   ) {
-    activeSearchResultPhysicalLine.value = null;
+    activeSearchResult.value = null;
   }
   searchInProgress.value = false;
 }
@@ -1710,7 +1734,7 @@ function scheduleSidebarSearch() {
   if (!currentFile.value || !q) {
     searchResults.value = [];
     searchInProgress.value = false;
-    activeSearchResultPhysicalLine.value = null;
+    activeSearchResult.value = null;
     readerRef.value?.clearInlineSearchState?.();
     hasInlineSearchHighlight.value = false;
     return;
@@ -1733,11 +1757,15 @@ watch([searchMatchCase, searchWholeWord, searchUseRegex], () => {
 
 watch(totalLineCount, () => {
   if (!searchQuery.value.trim()) return;
+  // 编辑态正文/换行均由 onReaderEditContentChange 触发重搜
+  if (readerEditMode.value) return;
   scheduleSidebarSearch();
 });
 
-watch(readerEditMode, () => {
+watch(readerEditMode, (edit) => {
   if (!searchQuery.value.trim()) return;
+  // 进入编辑：等磁盘原文写入 Monaco（readerEditLoaded）后再搜，避免只读展示文与列映射不一致
+  if (edit) return;
   scheduleSidebarSearch();
 });
 
@@ -1748,16 +1776,16 @@ watch(currentFile, (next, prev) => {
 
 function onJumpToSearchResult(item: SidebarSearchResult) {
   if (!currentFile.value || loading.value || totalLineCount.value <= 0) return;
-  activeSearchResultPhysicalLine.value = item.physicalLine;
+  activeSearchResult.value = {
+    physicalLine: item.physicalLine,
+    rangeStart: item.range.start,
+  };
   ensurePinBeforeRevealFindWidget();
-  const displayLine = readerEditMode.value
-    ? item.physicalLine
-    : stream.physicalLineToDisplayForReader(item.physicalLine);
-  const primaryRange = item.ranges[0];
-  const startColumn = primaryRange ? primaryRange.start + 1 : 1;
-  const endColumn = primaryRange
-    ? Math.max(startColumn + 1, primaryRange.end + 1)
-    : startColumn + 1;
+  const displayLine = item.displayLine;
+  const { startColumn, endColumn } = stream.physicalSearchRangeToDisplayColumns(
+    item.physicalLine,
+    item.range,
+  );
   readerRef.value?.setInlineSearchState?.(
     searchQuery.value,
     {
@@ -1786,7 +1814,7 @@ onBeforeUnmount(() => {
     clearTimeout(searchDebounceTimer);
     searchDebounceTimer = null;
   }
-  activeSearchResultPhysicalLine.value = null;
+  activeSearchResult.value = null;
   readerRef.value?.clearInlineSearchState?.();
   hasInlineSearchHighlight.value = false;
 });
@@ -2132,7 +2160,7 @@ useAppShellThemeWatch({
           :search-match-case="searchMatchCase"
           :search-whole-word="searchWholeWord"
           :search-use-regex="searchUseRegex"
-          :active-search-result-physical-line="activeSearchResultPhysicalLine"
+          :active-search-result="activeSearchResult"
           :has-inline-search-highlight="hasInlineSearchHighlight"
           :highlight-preview-bg="
             currentTheme === 'vs'

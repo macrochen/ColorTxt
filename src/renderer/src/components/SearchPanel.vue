@@ -8,7 +8,7 @@ type SearchResultItem = {
   physicalLine: number;
   displayLine: number;
   text: string;
-  ranges: SearchRange[];
+  range: SearchRange;
 };
 
 const props = withDefaults(
@@ -21,7 +21,7 @@ const props = withDefaults(
     matchCase?: boolean;
     wholeWord?: boolean;
     useRegex?: boolean;
-    activePhysicalLine?: number | null;
+    activeSearchResult?: { physicalLine: number; rangeStart: number } | null;
   }>(),
   {
     loading: false,
@@ -29,9 +29,20 @@ const props = withDefaults(
     matchCase: false,
     wholeWord: false,
     useRegex: false,
-    activePhysicalLine: null,
+    activeSearchResult: null,
   },
 );
+
+function isActiveSearchResult(
+  item: SearchResultItem,
+  active: { physicalLine: number; rangeStart: number } | null | undefined,
+): boolean {
+  if (!active) return false;
+  return (
+    item.physicalLine === active.physicalLine &&
+    item.range.start === active.rangeStart
+  );
+}
 
 const emit = defineEmits<{
   "update:query": [value: string];
@@ -175,14 +186,24 @@ function buildSegmentsByRanges(text: string, ranges: SearchRange[]) {
           :item-count="props.results.length"
           :row-stride="READER_SIDEBAR_ROW_STRIDE"
           :overscan="12"
-          :item-key="(i) => `${props.results[i]?.physicalLine}-${props.results[i]?.displayLine}`"
+          :item-key="
+            (i) => {
+              const r = props.results[i];
+              return r
+                ? `${r.physicalLine}-${r.range.start}-${r.range.end}`
+                : String(i);
+            }
+          "
         >
           <template #default="{ index }">
             <button
               type="button"
               class="searchResultItem"
               :class="{
-                active: props.results[index].physicalLine === props.activePhysicalLine,
+                active: isActiveSearchResult(
+                  props.results[index],
+                  props.activeSearchResult,
+                ),
               }"
               :title="linePreview(props.results[index].text)"
               @click="emit('jumpToResult', props.results[index])"
@@ -192,7 +213,7 @@ function buildSegmentsByRanges(text: string, ranges: SearchRange[]) {
                   v-for="(segment, idx) in (() => {
                     const d = remapRangesForTrimmedPreview(
                       props.results[index].text,
-                      props.results[index].ranges,
+                      [props.results[index].range],
                     );
                     return buildSegmentsByRanges(d.preview, d.ranges);
                   })()"

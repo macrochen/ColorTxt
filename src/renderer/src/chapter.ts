@@ -256,6 +256,38 @@ export function applyLeadIndentFullWidth(
   return FULL_WIDTH_INDENT_TWO + line.replace(RE_LEADING_WHITE_FOR_INDENT, "");
 }
 
+/** 物理行 0-based 偏移 → Monaco 展示行 0-based 偏移（行首全角缩进时 +2） */
+export function physicalOffsetToDisplayOffset(
+  physicalLine: string,
+  physicalOffset: number,
+): number {
+  const displayLine = applyLeadIndentFullWidth(physicalLine);
+  if (displayLine === physicalLine) {
+    return Math.max(0, Math.min(Math.floor(physicalOffset), displayLine.length));
+  }
+  const stripped = physicalLine.replace(RE_LEADING_WHITE_FOR_INDENT, "");
+  const leadingRemoved = physicalLine.length - stripped.length;
+  const indentLen = displayLine.length - stripped.length;
+  const off = Math.max(0, Math.floor(physicalOffset));
+  if (off < leadingRemoved) {
+    return Math.min(off + indentLen, indentLen);
+  }
+  return indentLen + (off - leadingRemoved);
+}
+
+/** 物理行内匹配区间 → Monaco 1-based 列号（与 {@link applyLeadIndentFullWidth} 展示文一致） */
+export function physicalRangeToDisplayColumns(
+  physicalLine: string,
+  range: { start: number; end: number },
+): { startColumn: number; endColumn: number } {
+  const start0 = physicalOffsetToDisplayOffset(physicalLine, range.start);
+  const end0 = physicalOffsetToDisplayOffset(physicalLine, range.end);
+  return {
+    startColumn: start0 + 1,
+    endColumn: Math.max(start0 + 2, end0 + 1),
+  };
+}
+
 export function normalizeLoadedChapterRules(
   raw: unknown,
 ): ChapterMatchRule[] | null {
