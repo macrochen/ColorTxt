@@ -124,6 +124,7 @@ src/
 ├── main/
 │   ├── index.ts              # 主进程入口：协议、窗口、IPC、单实例
 │   ├── ipcHandlers.ts        # 业务 IPC（对话框、目录、流式读、字体、主题等）
+│   ├── detectTextEncoding.ts # 文本文件编码探测（BOM / jschardet / 中文 ANSI 启发式）
 │   ├── registerAiIpc.ts      # `ai:*` IPC 集中注册
 │   ├── launchTxtHandlers.ts  # 单实例与 `.txt` 启动/关联打开
 │   ├── colortxtLocalProtocol.ts # `colortxt-local://` 本地资源短 URL
@@ -290,12 +291,13 @@ src/
 
 ##### `src/main/`（与专节交叉索引）
 
-**`index.ts`**、**`ipcHandlers.ts`**、**`globalShortcuts.ts`**、**`launchTxtHandlers.ts`**、**`windowFactory.ts`**、**`windowBounds.ts`**、**`updater.ts`**、**`updaterMessages.ts`**：生命周期、IPC 清单、流式读与 Monaco 写入、单实例与窗口行为等，见下文 **`src/main/`** 各小节。
+**`index.ts`**、**`ipcHandlers.ts`**、**`detectTextEncoding.ts`**、**`globalShortcuts.ts`**、**`launchTxtHandlers.ts`**、**`windowFactory.ts`**、**`windowBounds.ts`**、**`updater.ts`**、**`updaterMessages.ts`**：生命周期、IPC 清单、流式读与 Monaco 写入、单实例与窗口行为等，见下文 **`src/main/`** 各小节。
 
 ##### `src/main/`（其余模块）
 
 - **`registerAiIpc.ts`**：AI / RAG / Agent / 文生图 / 角色立绘 / 导出等 `ai:*` IPC 集中注册（依赖 `aiVectorDb` / `aiChat` / `aiAgentChat` 等）。
 - **`colortxtLocalProtocol.ts`**：`colortxt-local://resource/{uuid}` 短 URL 本地协议；磁盘路径注册后供 `<img>` / 阅读器插图安全访问。
+- **`detectTextEncoding.ts`**：文本文件编码探测，供 `ipcHandlers` 的 `file:stream` 与 `file:readWholeTextFile` 共用；详见下文 **`detectTextEncoding.ts`** 专节。
 - **`dialogInvoke.ts`**：`dialog:showOpenDialog` / `showSaveDialog` 参数解析（与 `@shared/colorTxtOpenSaveDialog` 对齐）。
 - **`messageBoxInvoke.ts`**：`dialog:showMessageBox` 参数解析（与 `@shared/colorTxtShowMessageBox` 对齐）。
 - **`aiConfig.ts`**：`userData/ai/config.json` 读写与默认值合并（对话 / 嵌入 / 文生图 / Agent 等）。
@@ -516,13 +518,27 @@ src/
     - (2) 系统设置里若开启「在程序坞中显示最近使用的应用程序」，刚退出的应用会出现在该区域。应用**无权**替用户改写程序坞固定项或系统 Dock 偏好，需用户在程序坞中右键「选项 → 从程序坞中移除」，或在 **系统设置 → 桌面与程序坞** 中关闭上述「最近使用」相关选项（具体文案随 macOS 版本略有差异）。
 - 与渲染进程 `services/shortcutService.ts` 中的键盘监听不同：后者仅在窗口聚焦且在前台时生效；本模块为 **Electron 主进程全局快捷键**，即使用户正在其他应用中也触发（若未被系统或其它应用抢占注册）。
 
+**`detectTextEncoding.ts`**
+
+- **职责**：根据文件头字节推断供 **`iconv-lite`** 解码的编码名；**`file:stream`** 与 **`file:readWholeTextFile`** 均经 **`detectTextFileEncoding(path, app.getLocale())`** 调用（实现于 `ipcHandlers.ts` 的 `detectEncoding`）。
+- **采样**：最多读取文件头 **64 KiB**（小文件则仅为实际字节数）；**不是**采样上限过小，而是短文本本身可供统计的字节过少时 `jschardet` 易误判。
+- **判定顺序**（`detectEncodingFromSample`）：
+  1. **BOM**：UTF-8 / UTF-16 LE / UTF-16 BE；
+  2. **纯 ASCII** → `utf8`；
+  3. **严格 UTF-8**（`TextDecoder` fatal）→ `utf8`；
+  4. **`jschardet.detect`**，并结合置信度与字节结构做修正（见下）；
+  5. 高置信度（≥ **0.7**）时采用 chardet 结果（经 `normalizeEncodingName`，如 `gbk` / `gb2312` → `gb18030`）；
+  6. 仍无法确定且字节像 GBK 族 → `gb18030`；否则回退 `utf8`。
+- **中文 ANSI（记事本）启发式**（`shouldPreferGbkFamily`）：当样本 **< 512 字节**、chardet **置信度 < 0.7**、被判为 ISO-8859-* / Windows-125* 等西欧编码，或 **`app.getLocale()`** 为 `zh-*` 且置信度 < 0.9 时，若非合法 UTF-8 且非 ASCII 段均可解析为 **GBK/GB18030 双字节序列**，则优先 **`gb18030`**（覆盖「仅几字中文 + 英文」的短文件被误判为 `ISO-8859-2` 等情况）。
+- **局限**：未识别 Windows「ANSI」标签本身；繁体 Big5（CP950）等与 GBK 字节形态相近时可能仍需用户通过底栏 **「保存为 GB2312」** 等方式显式转码；非中文环境的其它本地代码页亦不在此模块特判。
+
 **`ipcHandlers.ts`**
 
 - **集中注册的 IPC（`ipcMain`）**：`dialog:showOpenDialog` / `showSaveDialog` / **`showMessageBox`**（选项解析见 `dialogInvoke` / `messageBoxInvoke`）；`dir:listTxtFiles`（含扫描进度事件）、`file:stat`、`file:watchCurrent`、`fonts:listSystemFonts`、`shell:*`、`fs:*`、`colortxtLocal:registerPath`、`path:toFileUrl`、`file:stream` 等。
 - **历史清理**：独立的 **`dialog:confirmClear*`** 等确认 IPC 已不在此注册（`registerMainIpcHandlers` 内仅 **`removeHandler`** 清理旧名，防热重载重复注册）；渲染侧改用 **`showMessageBox`** 或应用内 **`appDialog`** 队列。
 - **快捷键**：`shortcut:getGlobalToggle`、`shortcut:validateGlobalToggle`、`shortcut:setGlobalToggle`、`shortcut:suspendForRecording`、`shortcut:resumeAfterRecording`（实现见 `globalShortcuts.ts`）。
-- **流式读文件（主进程）**：`file:stream` 使用 `createReadStream` + `iconv-lite` 解码，经 `file:stream-*` 向渲染进程推送数据块；编码由文件头采样 + `jschardet` 探测。
-- **整文件读写（阅读器编辑）**：**`file:readWholeTextFile`**（一次性读入、编码探测后解码为字符串）、**`file:writeTextFile`**（按指定编码整文件写出），与流式读盘并存；见 **「阅读器编辑模式」**。
+- **流式读文件（主进程）**：`file:stream` 使用 `createReadStream` + `iconv-lite` 解码，经 `file:stream-*` 向渲染进程推送数据块；编码由 **`detectTextEncoding.ts`** 探测（见上专节）。
+- **整文件读写（阅读器编辑）**：**`file:readWholeTextFile`**（一次性读入、**同一套**编码探测后解码为字符串）、**`file:writeTextFile`**（按指定编码整文件写出），与流式读盘并存；见 **「阅读器编辑模式」**。
 - **流式读文件（并发与序号）**：每次新流递增 `requestId` 并 `destroy` 上一轮同窗口读流；发送 chunk 前校验序号，避免旧流残留。渲染进程在 `resetSession` 时清空 `activeStreamRequestId` / `activeStreamFilePath`，并在 `onStreamChunk` / `onStreamEnd` / `onStreamError` 中比对 `requestId`，避免快速重复打开同一文件时旧 chunk 混入已重置的解析管道。
 - **渲染进程与 Monaco 写入**：主进程仍分块推送；渲染侧 `useTxtStreamPipeline` 对每个 chunk 只累积**物理行**；`onStreamEnd` 后 `flushCarry`，再 **`formatPhysicalLinesForReader`** → **`setFullText`**、更新 **`totalCharCount`**、**`setChapters`**（见 **「只读展示管线」**）。加载中不累加总字数、不匹配章节；底栏进度由各 chunk 的 `readBytes` / `totalBytes` 驱动。
 - 目录递归收集 `.txt`：迭代遍历 + `realpath` 去重，避免符号链接成环导致栈溢出。
@@ -801,7 +817,7 @@ src/
 
 ### 右侧编码
 
-- **展示**：当前探测/保存用编码标签（**`fileEncoding`**）。
+- **展示**：当前探测/保存用编码标签（**`fileEncoding`**）；打开文件时由主进程 **`detectTextEncoding.ts`** 自动探测（流式读与编辑载入共用），标签经 `encodingLabelForFooter` 显示（如 `UTF-8`、`GB2312`、其它 chardet 名大写）。
 - **可点条件**：由 **`footerEncodingActionsEnabled`** 控制（需 **`physicalReaderPath`**、**`currentFile`**、非 **`loading`**、非 **`ebookParsing`** 且 **`writeTextFile` 可用**）。
 - **菜单**：**保存为 UTF-8** / **保存为 GB2312** → **`saveReaderBufferWithIpcEncoding`**：`ReaderMain.getAllText()` → **`writeTextFile(physicalReaderPath, text, 编码)`** 覆盖落盘；成功后更新 **`fileEncoding`**、**`readerSaveEncoding`**，并 **`markReaderEditSaved`** / 清除编辑脏标记（与顶栏保存路径一致）。
 
@@ -849,7 +865,7 @@ src/
 ### 同步当前文件与主进程 IPC
 
 - **`useAppSyncCurrentFileWatch`**：编辑态不监听磁盘；编辑态保存不触发自动重载。
-- **`file:readWholeTextFile` / `file:writeTextFile`**：见 `ipcHandlers.ts`；preload 暴露 **`readWholeTextFile`**、**`writeTextFile`**。
+- **`file:readWholeTextFile` / `file:writeTextFile`**：见 `ipcHandlers.ts`；读盘编码与 **`file:stream`** 相同（**`detectTextEncoding.ts`**）；preload 暴露 **`readWholeTextFile`**、**`writeTextFile`**。
 
 ## 侧栏全文搜索（`App.vue` + `SearchPanel.vue`）
 
