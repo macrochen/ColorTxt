@@ -72,9 +72,9 @@ function readerChromeThemeColors(
     "editor.background": EDITOR_BACKGROUND_TRANSPARENT,
     "editor.foreground": palette.bodyText,
     "minimap.background": surfaceBg,
-    /** 轨道透明，透出阅读区底色与概览尺上的光标/装饰标记（同 VS Code） */
-    "scrollbar.background": EDITOR_BACKGROUND_TRANSPARENT,
-    /** 概览尺 Canvas 不铺底，仅绘制标记；底色由下方阅读区透出 */
+    /** 滚动条轨道与小地图同色；光标标记在概览尺 Canvas 上，叠在轨道之上（见 readerMainMonaco.css） */
+    "scrollbar.background": surfaceBg,
+    /** 概览尺 Canvas 透明底，仅绘制光标/装饰标记 */
     "editorOverviewRuler.background": EDITOR_BACKGROUND_TRANSPARENT,
     /** 与 VS Code 默认一致：半透明灰，避免用 app --border 显得过粗 */
     "editorOverviewRuler.border": "#7f7f7f4d",

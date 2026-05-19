@@ -121,21 +121,26 @@
 }
 
 /*
- * 概览尺：左边框由 Monaco 在 Canvas 上绘制（editorOverviewRuler.border），勿再叠 DOM border。
- * 轨道/Canvas 透明，光标位置等标记绘制在 Canvas 上，底色由阅读区透出。
+ * 概览尺与竖向滚动条同宽重叠（Monaco layout）；Canvas 透明底、叠在轨道之上，避免底色挡住光标标记。
  */
 .monaco-editor .decorationsOverviewRuler {
   background-color: transparent;
+  z-index: 11;
+  pointer-events: none;
 }
 
 /*
- * 滚动条轨道透明；滑块为半透明 token，可透出概览尺上的光标标记（同 VS Code）。
+ * 滚动条轨道与小地图同色；概览尺 Canvas 在上层绘制光标/装饰标记。
  */
 .monaco-editor .monaco-scrollable-element > .scrollbar.vertical,
-.monaco-editor .monaco-scrollable-element > .scrollbar.vertical.visible,
+.monaco-editor .monaco-scrollable-element > .scrollbar.vertical.visible {
+  background: var(--vscode-scrollbar-background) !important;
+  z-index: 10;
+}
+
 .monaco-editor .monaco-scrollable-element > .scrollbar.horizontal,
 .monaco-editor .monaco-scrollable-element > .scrollbar.horizontal.visible {
-  background: transparent !important;
+  background: var(--vscode-scrollbar-background) !important;
 }
 
 .monaco-editor .monaco-scrollable-element > .scrollbar > .slider {
