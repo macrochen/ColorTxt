@@ -11,6 +11,7 @@ import { VoiceReadLinePlayer } from "../services/voiceRead/voiceReadLinePlayer";
 import {
   hasVoiceReadSpeakableText,
   splitVoiceReadChunks,
+  stripVoiceReadMarkdown,
   VOICE_READ_CHUNK_UNITS_DEFAULT,
   VOICE_READ_CHUNK_UNITS_EDGE,
 } from "../services/voiceRead/voiceReadTextChunks";
@@ -195,7 +196,8 @@ export function useAppVoiceRead(deps: {
     if (!reader || batchEnd >= mCount) return;
     for (let L = batchEnd + 1; L <= mCount; L++) {
       const rawAfter = reader.getEditorLineContent?.(L) ?? "";
-      const t = rawAfter.replace(/\s+/g, " ").trim();
+      const stripped = stripVoiceReadMarkdown(rawAfter);
+      const t = stripped.replace(/\s+/g, " ").trim();
       if (!hasVoiceReadSpeakableText(t)) continue;
       player.startPrefetch(settings, t);
       return;
@@ -206,9 +208,10 @@ export function useAppVoiceRead(deps: {
     const reader = deps.readerRef.value;
     if (!reader || line < 1) return;
     const raw = reader.getEditorLineContent?.(line) ?? "";
-    const t = raw.replace(/\s+/g, " ").trim();
+    const stripped = stripVoiceReadMarkdown(raw);
+    const t = stripped.replace(/\s+/g, " ").trim();
     if (!hasVoiceReadSpeakableText(t)) return;
-    player.warmLine(settings, raw);
+    player.warmLine(settings, stripped);
   }
 
   /** 预生成锚点行上下各一行，手动上一行/下一行命中缓存 */
@@ -252,7 +255,8 @@ export function useAppVoiceRead(deps: {
       const chunkToModelLine: number[] = [];
       for (let L = ln; L <= batchEnd; L++) {
         const rawL = reader.getEditorLineContent?.(L) ?? "";
-        const t = rawL.replace(/\s+/g, " ").trim();
+        const stripped = stripVoiceReadMarkdown(rawL);
+        const t = stripped.replace(/\s+/g, " ").trim();
         if (!hasVoiceReadSpeakableText(t)) continue;
         const parts = splitVoiceReadChunks(t, units);
         for (const p of parts) {
@@ -387,9 +391,8 @@ export function useAppVoiceRead(deps: {
   function lineHasSpeakableContent(line: number): boolean {
     const reader = deps.readerRef.value;
     if (!reader || line < 1) return false;
-    const t = (reader.getEditorLineContent?.(line) ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const raw = reader.getEditorLineContent?.(line) ?? "";
+    const t = stripVoiceReadMarkdown(raw).replace(/\s+/g, " ").trim();
     return hasVoiceReadSpeakableText(t);
   }
 
@@ -524,7 +527,8 @@ export function useAppVoiceRead(deps: {
     const ln = getPlaybackAnchorLine();
     const settings = effectiveSettingsForSpeak();
     const raw = reader.getEditorLineContent?.(ln) ?? "";
-    player.invalidateLineSynthesis(settings, raw);
+    const stripped = stripVoiceReadMarkdown(raw);
+    player.invalidateLineSynthesis(settings, stripped);
     if (mode.value === "paused") mode.value = "playing";
     restartPlaybackFromLine(ln);
   }

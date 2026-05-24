@@ -3,11 +3,20 @@
  */
 
 /**
+ * 清除用于格式化（加粗、斜体）的 Markdown 星号，以免 TTS 朗读出“星号”
+ */
+export function stripVoiceReadMarkdown(text: string): string {
+  let stripped = text.replace(/\*\*([^*]+)\*\*/g, "$1");
+  stripped = stripped.replace(/\*([^*]+)\*/g, "$1");
+  return stripped;
+}
+
+/**
  * 是否含 TTS 可朗读的实义字符（字母、数字、CJK 等）。
  * 仅空白、标点、符号（如 ※、──）返回 false，避免 Edge 无音频与长时间重试。
  */
 export function hasVoiceReadSpeakableText(text: string): boolean {
-  const t = text.replace(/\s+/g, " ").trim();
+  const t = stripVoiceReadMarkdown(text).replace(/\s+/g, " ").trim();
   if (!t) return false;
   return /[\p{L}\p{N}\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]/u.test(t);
 }

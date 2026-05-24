@@ -18,6 +18,7 @@ import {
 import {
   buildChapterMinimapSectionHeaderDecorations,
   buildChapterTitleDecorations,
+  buildMarkdownDecorations,
   getReaderMinimapCursorLineDecorColor,
   setReaderSyntaxHighlightEnabled,
 } from "../monaco/readerInlineDecorations";
@@ -111,6 +112,8 @@ const editor = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 const model = shallowRef<monaco.editor.ITextModel | null>(null);
 /** 章节标题行内装饰（`buildChapterTitleDecorations` / `inlineClassName` 着色）；与 View Zone 留白无关 */
 const chapterTitleDecorationsCollection =
+  shallowRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+const markdownDecorationsCollection =
   shallowRef<monaco.editor.IEditorDecorationsCollection | null>(null);
 const inlineSearchDecorationsCollection =
   shallowRef<monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -1121,6 +1124,7 @@ function clear(opts?: ReaderClearOptions) {
   const e = editor.value;
   const prevModel = model.value;
   chapterTitleDecorationsCollection.value?.clear();
+  markdownDecorationsCollection.value?.clear();
   inlineSearch.clearInlineSearchState();
   voiceReadDecorationsCollection.value?.clear();
   minimapCursorLineDecorationsCollection.value?.clear();
@@ -1134,6 +1138,7 @@ function clear(opts?: ReaderClearOptions) {
     prevModel.dispose();
     model.value = next;
     chapterTitleDecorationsCollection.value = e.createDecorationsCollection();
+    markdownDecorationsCollection.value = e.createDecorationsCollection();
     inlineSearchDecorationsCollection.value = e.createDecorationsCollection();
     voiceReadDecorationsCollection.value = e.createDecorationsCollection();
     minimapCursorLineDecorationsCollection.value =
@@ -1143,6 +1148,13 @@ function clear(opts?: ReaderClearOptions) {
     e.setPosition({ lineNumber: 1, column: 1 });
     e.setScrollTop(0);
     e.layout();
+    
+    // Update markdown decorations whenever content changes
+    next.onDidChangeContent(() => {
+      window.requestAnimationFrame(() => {
+        markdownDecorationsCollection.value?.set(buildMarkdownDecorations(monaco, next));
+      });
+    });
   } else {
     prevModel?.setValue("");
   }
@@ -2130,6 +2142,12 @@ onMounted(() => {
   const m = monaco.editor.createModel("", languageId);
   model.value = m;
 
+  m.onDidChangeContent(() => {
+    window.requestAnimationFrame(() => {
+      markdownDecorationsCollection.value?.set(buildMarkdownDecorations(monaco, m));
+    });
+  });
+
   ensureStickyChapterBarClickDisabled();
 
   editor.value = monaco.editor.create(editorEl.value!, {
@@ -2143,6 +2161,8 @@ onMounted(() => {
     }),
   });
   chapterTitleDecorationsCollection.value =
+    editor.value.createDecorationsCollection();
+  markdownDecorationsCollection.value =
     editor.value.createDecorationsCollection();
   inlineSearchDecorationsCollection.value =
     editor.value.createDecorationsCollection();
@@ -2496,6 +2516,18 @@ onMounted(() => {
   color: var(--reader-chapter-title) !important;
   font-size: 2em !important;
 }
+
+:deep(.monaco-editor .txtr-md-marker) {
+  font-size: 0 !important;
+  opacity: 0 !important;
+}
+:deep(.monaco-editor .txtr-md-bold) {
+  font-weight: bold !important;
+}
+:deep(.monaco-editor .txtr-md-italic) {
+  font-style: italic !important;
+}
+
 :deep(.monaco-editor span:has(> .chapterTitleLine)) {
   display: inline-block;
   transform-origin: left;

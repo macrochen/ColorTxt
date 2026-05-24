@@ -196,6 +196,7 @@ export function setReaderSyntaxHighlightEnabled(
     );
     return;
   }
+
   monacoApi.editor.defineTheme("vs-dark", {
     base: "vs-dark",
     inherit: true,
@@ -266,4 +267,35 @@ export function buildChapterMinimapSectionHeaderDecorations(
         },
       },
     }));
+}
+
+export function buildMarkdownDecorations(
+  monacoApi: typeof import("monaco-editor"),
+  model: monaco.editor.ITextModel,
+): monaco.editor.IModelDeltaDecoration[] {
+  const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+  
+  const boldMatches = model.findMatches("\\*\\*(.*?)\\*\\*", false, true, false, null, true);
+  for (const match of boldMatches) {
+    const startRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn, match.range.startLineNumber, match.range.startColumn + 2);
+    const textRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn + 2, match.range.endLineNumber, match.range.endColumn - 2);
+    const endRange = new monacoApi.Range(match.range.endLineNumber, match.range.endColumn - 2, match.range.endLineNumber, match.range.endColumn);
+    
+    decorations.push({ range: startRange, options: { inlineClassName: "txtr-md-marker" } });
+    decorations.push({ range: textRange, options: { inlineClassName: "txtr-md-bold" } });
+    decorations.push({ range: endRange, options: { inlineClassName: "txtr-md-marker" } });
+  }
+
+  const italicMatches = model.findMatches("\\*([^\\*]+)\\*", false, true, false, null, true);
+  for (const match of italicMatches) {
+    const startRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn, match.range.startLineNumber, match.range.startColumn + 1);
+    const textRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn + 1, match.range.endLineNumber, match.range.endColumn - 1);
+    const endRange = new monacoApi.Range(match.range.endLineNumber, match.range.endColumn - 1, match.range.endLineNumber, match.range.endColumn);
+    
+    decorations.push({ range: startRange, options: { inlineClassName: "txtr-md-marker" } });
+    decorations.push({ range: textRange, options: { inlineClassName: "txtr-md-italic" } });
+    decorations.push({ range: endRange, options: { inlineClassName: "txtr-md-marker" } });
+  }
+
+  return decorations;
 }

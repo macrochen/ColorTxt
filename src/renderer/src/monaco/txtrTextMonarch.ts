@@ -123,6 +123,7 @@ export function createTxtrTextMonarchLanguage(
     tokenizer: {
       root: [
         ...bracketOpenerRules(),
+
         [/"/, { token: "txtr.punctuation", next: "stringDouble" }],
         [/「/, { token: "txtr.punctuation", next: "stringCorner" }],
         [/『/, { token: "txtr.punctuation", next: "stringWhite" }],
