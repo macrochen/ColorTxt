@@ -288,6 +288,12 @@ export function buildMarkdownDecorations(
 
   const italicMatches = model.findMatches("\\*([^\\*]+)\\*", false, true, false, null, true);
   for (const match of italicMatches) {
+    const isOverlapping = boldMatches.some(bm => {
+      if (bm.range.startLineNumber !== match.range.startLineNumber) return false;
+      return bm.range.startColumn <= match.range.endColumn && bm.range.endColumn >= match.range.startColumn;
+    });
+    if (isOverlapping) continue;
+
     const startRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn, match.range.startLineNumber, match.range.startColumn + 1);
     const textRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn + 1, match.range.endLineNumber, match.range.endColumn - 1);
     const endRange = new monacoApi.Range(match.range.endLineNumber, match.range.endColumn - 1, match.range.endLineNumber, match.range.endColumn);
