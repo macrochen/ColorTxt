@@ -99,7 +99,7 @@ export const defaultChapterMinCharCount = 100;
 export const minChapterMinCharCount = 0;
 export const maxChapterMinCharCount = 100000;
 export const defaultReaderFontSize = 24;
-export const defaultReaderLineHeightMultiple = 1.5;
+export const defaultReaderLineHeightMultiple = 1.8;
 export const defaultRestoreSessionOnStartup = true;
 /** 是否监控当前打开文件并在磁盘变更后自动重新加载（默认关闭） */
 export const defaultSyncCurrentFile = false;
