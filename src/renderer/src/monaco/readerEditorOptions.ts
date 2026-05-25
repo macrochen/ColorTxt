@@ -21,8 +21,8 @@ export const READER_UNICODE_HIGHLIGHT_DISABLED: editor.IUnicodeHighlightOptions 
 /** 阅读器 Monaco 初始字号（与 App 持久化同步前） */
 export const READER_EDITOR_DEFAULT_FONT_SIZE = 14;
 
-/** 阅读器 Monaco 初始字体栈（与 FontPicker「京華老宋体」预设一致） */
-export const READER_EDITOR_DEFAULT_FONT_FAMILY = getPresetCssStack("kinghwa");
+/** 阅读器 Monaco 初始字体栈（改为普通无衬线体：苹方/微软雅黑） */
+export const READER_EDITOR_DEFAULT_FONT_FAMILY = getPresetCssStack("msyahei");
 
 export const READER_EDITOR_PADDING = { top: 10, bottom: 10 } as const;
 
