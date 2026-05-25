@@ -185,7 +185,12 @@ export function loadPersistedSettingsData(
     data.lineHeightMultiple = obj.lineHeightMultiple;
   }
   if (typeof obj.fontFamily === "string" && obj.fontFamily.trim()) {
-    data.fontFamily = obj.fontFamily;
+    // Migrate old KingHwa default to standard sans-serif
+    if (obj.fontFamily.includes("KingHwa OldSong")) {
+      data.fontFamily = undefined; // Will fall back to default
+    } else {
+      data.fontFamily = obj.fontFamily;
+    }
   }
   if (typeof obj.monacoCustomHighlight === "boolean") {
     data.monacoCustomHighlight = obj.monacoCustomHighlight;
