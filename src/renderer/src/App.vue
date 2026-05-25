@@ -1202,19 +1202,24 @@ const chapterNav = useAppChapterNavigation({
 
 afterStreamFullTextInstalled = async () => {
   if (currentFileIsMarkdown.value && !readerEditMode.value) {
+    readerRef.value?.expandMarkdownTablesInModel?.();
     readerRef.value?.expandMarkdownImagesInModel?.(physicalReaderPath.value);
   }
+  const tableAnchors = await readerRef.value?.applyEmbeddedTableAnchors?.();
   const imgAnchors = await readerRef.value?.applyEmbeddedImageAnchors(
     physicalReaderPath.value,
   );
   readerRef.value?.applyEbookInternalLinkMarkers?.();
-  if (
-    imgAnchors?.deletedOriginalLineNumbersDesc?.length &&
-    compressBlankLines.value
-  ) {
-    stream.removeFilteredDisplayLinesAtOriginalIndices(
-      imgAnchors.deletedOriginalLineNumbersDesc,
-    );
+  
+  if (compressBlankLines.value) {
+    const deletedLines = [
+      ...(tableAnchors?.deletedOriginalLineNumbersDesc || []),
+      ...(imgAnchors?.deletedOriginalLineNumbersDesc || [])
+    ].sort((a, b) => b - a);
+    
+    if (deletedLines.length > 0) {
+      stream.removeFilteredDisplayLinesAtOriginalIndices(deletedLines);
+    }
   }
   stream.resyncMirrorFromReader();
 };

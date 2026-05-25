@@ -28,7 +28,12 @@ import {
   removeViewZonesById,
   type ReplaceImgAnchorsResult,
 } from "../monaco/readerImageViewZones";
+import {
+  replaceTableAnchorLinesWithViewZones,
+  type ReplaceTableAnchorsResult,
+} from "../monaco/readerTableViewZones";
 import { expandMarkdownImagesInPlainText } from "../markdown/markdownImages";
+import { expandMarkdownTablesInPlainText } from "../markdown/markdownTables";
 import { formatMarkdownHeadingLineForDisplay } from "../markdown/markdownChapter";
 import {
   READER_EDITOR_DEFAULT_FONT_FAMILY,
@@ -137,6 +142,7 @@ const hlDraftText = ref("");
 const hlFloatRootRef = ref<HTMLElement | null>(null);
 const imageLightboxSrc = ref("");
 const imageViewZoneIds = ref<string[]>([]);
+const tableViewZoneIds = ref<string[]>([]);
 /** 滚动时与 View Zone 合成对齐：取消未执行的 rAF，避免 dispose 后仍 render */
 let imageViewZoneScrollRenderRaf: number | null = null;
 /** 电子书内链装饰 id（`deltaDecorations` 返回） */
@@ -356,6 +362,7 @@ async function loadReaderEditFromDisk() {
     })();
   disposeEbookInternalLinks();
   await applyEmbeddedImageAnchors(null);
+  await applyEmbeddedTableAnchors();
   readerEditSuppressDirty = true;
   m.setValue(r.text);
   readerEditLoadedPhysicalKey = p;
@@ -957,6 +964,14 @@ function disposeImageViewZones() {
   imageViewZoneIds.value = [];
 }
 
+function disposeTableViewZones() {
+  const e = editor.value;
+  if (e && tableViewZoneIds.value.length > 0) {
+    removeViewZonesById(e, tableViewZoneIds.value);
+  }
+  tableViewZoneIds.value = [];
+}
+
 function disposeEbookInternalLinks() {
   const e = editor.value;
   if (e && ebookInternalLinkDecorationIds.length > 0) {
@@ -1097,6 +1112,17 @@ function expandMarkdownImagesInModel(mdFileAbsPath: string | null): void {
   }
 }
 
+function expandMarkdownTablesInModel(): void {
+  if (props.readerEditMode) return;
+  const m = model.value;
+  if (!m) return;
+  const text = m.getValue();
+  const expanded = expandMarkdownTablesInPlainText(text);
+  if (expanded !== text) {
+    m.setValue(expanded);
+  }
+}
+
 async function applyEmbeddedImageAnchors(
   convertedTxtAbsPath: string | null,
 ): Promise<ReplaceImgAnchorsResult> {
@@ -1108,14 +1134,29 @@ async function applyEmbeddedImageAnchors(
   if (!e) return { zoneIds: [], deletedOriginalLineNumbersDesc: [] };
   const result = await replaceImgAnchorLinesWithViewZones(monaco, e, p, {
     zoneHeightPx: 100,
+    onZonesChange: (ids) => {
+      imageViewZoneIds.value = ids;
+    },
   });
-  imageViewZoneIds.value = result.zoneIds;
+  return result;
+}
+
+async function applyEmbeddedTableAnchors(): Promise<ReplaceTableAnchorsResult> {
+  disposeTableViewZones();
+  const e = editor.value;
+  if (!e) return { zoneIds: [], deletedOriginalLineNumbersDesc: [] };
+  const result = await replaceTableAnchorLinesWithViewZones(monaco, e, {
+    onZonesChange: (ids) => {
+      tableViewZoneIds.value = ids;
+    },
+  });
   return result;
 }
 
 function clear(opts?: ReaderClearOptions) {
   disposeEbookInternalLinks();
   disposeImageViewZones();
+  disposeTableViewZones();
   imageLightboxSrc.value = "";
   streamCarriageReturnPending = false;
   lastChapterTitleDecorationsLineKey = "";
@@ -2065,7 +2106,9 @@ defineExpose({
   getSerializedEditorViewState,
   restoreEditorViewState,
   expandMarkdownImagesInModel,
+  expandMarkdownTablesInModel,
   applyEmbeddedImageAnchors,
+  applyEmbeddedTableAnchors,
   applyEbookInternalLinkMarkers,
   getEbookLeadingLinkLabelsByDisplayLine,
   getReaderEditorDomNode: () => editor.value?.getDomNode() ?? null,
@@ -2532,5 +2575,69 @@ onMounted(() => {
   display: inline-block;
   transform-origin: left;
   transform: scale(0.6);
+}
+</style>
+
+<style>
+/* CSS styles for view zones */
+.readerImageViewZone {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10; /* Ensure images appear above inline decorations if overlapping */
+}
+
+.readerImageViewZoneFrame {
+  display: inline-block;
+  cursor: zoom-in;
+  max-width: 100%;
+}
+
+.readerImageViewZoneFrame img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.readerTableViewZone {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  z-index: 10;
+  color: var(--n-text-color);
+  font-family: var(--n-font-family);
+}
+
+.readerTableViewZoneWrapper {
+  width: 100%;
+  overflow-x: auto;
+  padding: 8px 0;
+}
+
+.readerTableViewZoneWrapper table {
+  border-collapse: collapse;
+  margin: 0;
+  width: max-content;
+  max-width: 100%;
+  background-color: var(--n-color);
+  font-size: 0.9em;
+  border-radius: 4px;
+  border: 1px solid var(--n-border-color);
+}
+
+.readerTableViewZoneWrapper th,
+.readerTableViewZoneWrapper td {
+  padding: 8px 12px;
+  border: 1px solid var(--n-border-color);
+}
+
+.readerTableViewZoneWrapper th {
+  background-color: var(--n-color-modal);
+  font-weight: 600;
+}
+
+.readerTableViewZoneWrapper tbody tr:nth-child(even) {
+  background-color: var(--n-color-modal);
 }
 </style>
