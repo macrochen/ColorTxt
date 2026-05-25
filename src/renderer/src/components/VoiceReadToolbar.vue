@@ -138,7 +138,7 @@ function toggleToolbarLayer() {
                     class="rateSlider"
                     :model-value="toolbarRate"
                     :min="0.5"
-                    :max="2"
+                    :max="3"
                     :step="0.05"
                     :disabled="toolbarLocked || rateDisabled"
                     :show-percent="false"

@@ -39,7 +39,9 @@ function isDecodeAudioDataEncodingError(err: unknown): boolean {
 }
 
 function normalizeLineText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+  let t = text.replace(/\s+/g, " ").trim();
+  t = t.replace(/^[*\\-]\s+/, "");
+  return t;
 }
 
 function lineCacheKey(settings: VoiceReadSettings, text: string): string {
@@ -1219,7 +1221,7 @@ export class VoiceReadLinePlayer {
     const src = ctx.createBufferSource();
     src.buffer = audioBuffer;
     const s = this.dashSessionSettings;
-    src.playbackRate.value = Math.max(0.5, Math.min(2, s?.rate ?? 1));
+    src.playbackRate.value = Math.max(0.5, Math.min(3, s?.rate ?? 1));
     src.connect(gain);
 
     const startAt = Math.max(ctx.currentTime, this.dashScheduledEnd);
@@ -1276,7 +1278,7 @@ export class VoiceReadLinePlayer {
 
     const src = ctx.createBufferSource();
     src.buffer = audioBuffer;
-    src.playbackRate.value = Math.max(0.5, Math.min(2, settings.rate));
+    src.playbackRate.value = Math.max(0.5, Math.min(3, settings.rate));
     src.connect(this.dashGain!);
 
     await new Promise<void>((resolve, reject) => {

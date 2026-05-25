@@ -23,7 +23,7 @@ export const defaultVoiceReadSettings: VoiceReadSettings = {
 };
 
 export const voiceReadRateMin = 0.5;
-export const voiceReadRateMax = 2;
+export const voiceReadRateMax = 3;
 export const voiceReadPitchMin = 0.5;
 export const voiceReadPitchMax = 2;
 

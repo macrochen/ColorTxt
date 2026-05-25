@@ -317,7 +317,7 @@ const pitchDisabled = computed(
           <RangeSlider
             :model-value="draft.rate"
             :min="0.5"
-            :max="2"
+            :max="3"
             :step="0.05"
             :disabled="rateDisabled"
             :show-percent="false"

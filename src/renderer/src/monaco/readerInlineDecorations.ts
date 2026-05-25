@@ -274,6 +274,34 @@ export function buildMarkdownDecorations(
   model: monaco.editor.ITextModel,
 ): monaco.editor.IModelDeltaDecoration[] {
   const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+
+  const listMatches = model.findMatches("^\\s*[*\\-]\\s+", false, true, false, null, true);
+  for (const match of listMatches) {
+    const text = model.getValueInRange(match.range);
+    const markerIndex = text.search(/[*\\-]/);
+    if (markerIndex !== -1) {
+      let spaceCount = 0;
+      for (let i = 0; i < markerIndex; i++) {
+        spaceCount += text[i] === '\t' ? 4 : 1;
+      }
+      
+      let levelClass = "txtr-md-list-marker";
+      if (spaceCount >= 6) {
+        levelClass = "txtr-md-list-marker-l2";
+      } else if (spaceCount >= 2) {
+        levelClass = "txtr-md-list-marker-l1";
+      }
+
+      const markerColumn = match.range.startColumn + markerIndex;
+      const markerRange = new monacoApi.Range(
+        match.range.startLineNumber,
+        markerColumn,
+        match.range.startLineNumber,
+        markerColumn + 1
+      );
+      decorations.push({ range: markerRange, options: { inlineClassName: levelClass } });
+    }
+  }
   
   const boldMatches = model.findMatches("\\*\\*(.*?)\\*\\*", false, true, false, null, true);
   for (const match of boldMatches) {

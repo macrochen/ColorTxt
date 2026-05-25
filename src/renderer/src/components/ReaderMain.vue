@@ -2564,6 +2564,36 @@ onMounted(() => {
   font-size: 0 !important;
   opacity: 0 !important;
 }
+:deep(.monaco-editor .txtr-md-list-marker),
+:deep(.monaco-editor .txtr-md-list-marker-l1),
+:deep(.monaco-editor .txtr-md-list-marker-l2) {
+  visibility: hidden !important;
+  position: relative !important;
+}
+:deep(.monaco-editor .txtr-md-list-marker::after) {
+  content: "•" !important;
+  visibility: visible !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  pointer-events: none !important;
+}
+:deep(.monaco-editor .txtr-md-list-marker-l1::after) {
+  content: "◦" !important;
+  visibility: visible !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  pointer-events: none !important;
+}
+:deep(.monaco-editor .txtr-md-list-marker-l2::after) {
+  content: "▪" !important;
+  visibility: visible !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  pointer-events: none !important;
+}
 :deep(.monaco-editor .txtr-md-bold) {
   font-weight: bold !important;
 }
