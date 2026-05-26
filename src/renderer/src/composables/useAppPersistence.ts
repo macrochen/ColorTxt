@@ -150,6 +150,7 @@ export function useAppPersistence(deps: {
   monacoAdvancedWrapping: Ref<boolean>;
   monacoSmoothScrolling: Ref<boolean>;
   readerEditShowLineNumbers: Ref<boolean>;
+  readerCopyOnSelect: Ref<boolean>;
   readerEditMinimap: Ref<boolean>;
   editAutoRefreshChapterList: Ref<boolean>;
   fullscreenReaderWidthPercent: Ref<number>;
@@ -699,6 +700,9 @@ export function useAppPersistence(deps: {
     if (typeof data.readerEditShowLineNumbers === "boolean") {
       deps.readerEditShowLineNumbers.value = data.readerEditShowLineNumbers;
     }
+    if (typeof data.readerCopyOnSelect === "boolean") {
+      deps.readerCopyOnSelect.value = data.readerCopyOnSelect;
+    }
     if (typeof data.readerEditMinimap === "boolean") {
       deps.readerEditMinimap.value = data.readerEditMinimap;
     }
@@ -833,6 +837,7 @@ export function useAppPersistence(deps: {
       monacoAdvancedWrapping: deps.monacoAdvancedWrapping.value,
       monacoSmoothScrolling: deps.monacoSmoothScrolling.value,
       readerEditShowLineNumbers: deps.readerEditShowLineNumbers.value,
+      readerCopyOnSelect: deps.readerCopyOnSelect.value,
       readerEditMinimap: deps.readerEditMinimap.value,
       editAutoRefreshChapterList: deps.editAutoRefreshChapterList.value,
       fullscreenReaderWidthPercent: deps.fullscreenReaderWidthPercent.value,

@@ -58,6 +58,7 @@ export type SettingsApplyPayload = {
   chapterMinCharCount: number;
   fullscreenReaderWidthPercent: number;
   monacoSmoothScrolling: boolean;
+  readerCopyOnSelect: boolean;
   readerEditShowLineNumbers: boolean;
   readerEditMinimap: boolean;
   editAutoRefreshChapterList: boolean;
@@ -84,6 +85,7 @@ const props = defineProps<{
   readerFontSize: number;
   readerLineHeightMultiple: number;
   monacoSmoothScrolling: boolean;
+  readerCopyOnSelect: boolean;
   readerEditShowLineNumbers: boolean;
   readerEditMinimap: boolean;
   editAutoRefreshChapterList: boolean;
@@ -123,6 +125,7 @@ const draftFullscreenReaderWidthPercent = ref(50);
 const draftFontSize = ref(14);
 const draftLineHeightMultiple = ref(1.5);
 const draftMonacoSmoothScrolling = ref(true);
+const draftReaderCopyOnSelect = ref(false);
 const draftReaderEditShowLineNumbers = ref(defaultReaderEditShowLineNumbers);
 const draftReaderEditMinimap = ref(defaultReaderEditMinimap);
 const draftEditAutoRefreshChapterList = ref(defaultEditAutoRefreshChapterList);
@@ -160,6 +163,7 @@ function syncDraftFromProps() {
     props.readerLineHeightMultiple,
   );
   draftMonacoSmoothScrolling.value = props.monacoSmoothScrolling;
+  draftReaderCopyOnSelect.value = props.readerCopyOnSelect;
   draftReaderEditShowLineNumbers.value = props.readerEditShowLineNumbers;
   draftReaderEditMinimap.value = props.readerEditMinimap;
   draftEditAutoRefreshChapterList.value = props.editAutoRefreshChapterList;
@@ -239,6 +243,7 @@ function resetReadingDraft() {
     defaultReaderLineHeightMultiple,
   );
   draftMonacoSmoothScrolling.value = defaultMonacoSmoothScrolling;
+  draftReaderCopyOnSelect.value = false;
   draftCompressBlankKeepOneBlank.value = defaultCompressBlankKeepOneBlank;
   draftTxtrDelimitedMatchCrossLine.value = defaultTxtrDelimitedMatchCrossLine;
   draftFullscreenReaderWidthPercent.value = defaultFullscreenReaderWidthPercent;
@@ -344,6 +349,7 @@ async function onConfirm() {
     chapterMinCharCount: draftChapterMinCharCount.value,
     fullscreenReaderWidthPercent: draftFullscreenReaderWidthPercent.value,
     monacoSmoothScrolling: draftMonacoSmoothScrolling.value,
+    readerCopyOnSelect: draftReaderCopyOnSelect.value,
     readerEditShowLineNumbers: draftReaderEditShowLineNumbers.value,
     readerEditMinimap: draftReaderEditMinimap.value,
     editAutoRefreshChapterList: draftEditAutoRefreshChapterList.value,
@@ -428,6 +434,7 @@ async function onClearCache() {
               v-model:draft-font-size="draftFontSize"
               v-model:draft-line-height-multiple="draftLineHeightMultiple"
               v-model:draft-monaco-smooth-scrolling="draftMonacoSmoothScrolling"
+              v-model:draft-reader-copy-on-select="draftReaderCopyOnSelect"
               v-model:draft-compress-blank-keep-one-blank="
                 draftCompressBlankKeepOneBlank
               "

@@ -36,6 +36,7 @@ const props = defineProps<{
   monacoSmoothScrolling: boolean;
   readerEditShowLineNumbers: boolean;
   readerEditMinimap: boolean;
+  readerCopyOnSelect: boolean;
   editAutoRefreshChapterList: boolean;
   compressBlankKeepOneBlank: boolean;
   monacoCustomHighlight: boolean;
@@ -186,6 +187,7 @@ onBeforeUnmount(() => {
     :monaco-smooth-scrolling="monacoSmoothScrolling"
     :reader-edit-show-line-numbers="readerEditShowLineNumbers"
     :reader-edit-minimap="readerEditMinimap"
+    :reader-copy-on-select="readerCopyOnSelect"
     :edit-auto-refresh-chapter-list="editAutoRefreshChapterList"
     :compress-blank-keep-one-blank="compressBlankKeepOneBlank"
     :monaco-custom-highlight="monacoCustomHighlight"

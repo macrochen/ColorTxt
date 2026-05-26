@@ -18,7 +18,7 @@ import {
 import {
   buildChapterMinimapSectionHeaderDecorations,
   buildChapterTitleDecorations,
-  buildMarkdownDecorations,
+  buildMarkdownDecorations, // forced HMR comment
   getReaderMinimapCursorLineDecorColor,
   setReaderSyntaxHighlightEnabled,
 } from "../monaco/readerInlineDecorations";
@@ -99,6 +99,7 @@ import {
   READER_HL_FLOAT_ROOT_Z_INDEX,
   subscribeModalStackChange,
 } from "../utils/modalStack";
+import { appToast } from "../services/appToast";
 import { stripEbookIdAndAMarkersFromText } from "../ebook/ebookInternalLinkMarkers";
 import { appAlert } from "../services/appDialog";
 
@@ -204,6 +205,7 @@ const props = withDefaults(
     /** 编辑模式下是否显示行号（只读模式始终关闭） */
     readerEditShowLineNumbers?: boolean;
     readerEditMinimap?: boolean;
+    readerCopyOnSelect?: boolean;
     /** 主进程流式读盘期间为 true；关闭 sticky 避免旧文件黏性标题在加载全程残留 */
     streamLoading?: boolean;
     /** 合并用户覆盖后的阅读器表面色（亮色 / 暗色） */
@@ -253,6 +255,7 @@ const props = withDefaults(
     monacoSmoothScrolling: defaultMonacoSmoothScrolling,
     readerEditShowLineNumbers: defaultReaderEditShowLineNumbers,
     readerEditMinimap: defaultReaderEditMinimap,
+    readerCopyOnSelect: false,
     streamLoading: false,
     readerSurfaceLight: () => ({ ...defaultReaderPaletteLight }),
     readerSurfaceDark: () => ({ ...defaultReaderPaletteDark }),
@@ -2233,12 +2236,30 @@ onMounted(() => {
       emitProbeLine(false);
       syncMinimapCursorLineDecoration();
     });
+    let copyDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastCopiedText = "";
+
     const dSel = e.onDidChangeCursorSelection(() => {
       if (Date.now() < suppressHighlightTipUntilMs) {
         closeHighlightFloatUi();
         return;
       }
       void nextTick(() => updateHighlightTipFromSelection());
+      if (props.readerCopyOnSelect && !props.readerEditMode) {
+        if (copyDebounceTimer) clearTimeout(copyDebounceTimer);
+        copyDebounceTimer = setTimeout(() => {
+          const sel = e.getSelection();
+          const m = model.value;
+          if (sel && m && !sel.isEmpty()) {
+            const text = m.getValueInRange(sel);
+            if (text && text !== lastCopiedText) {
+              void navigator.clipboard.writeText(text);
+              lastCopiedText = text;
+              appToast("已复制到剪贴板", { kind: "success", duration: 2000 });
+            }
+          }
+        }, 500);
+      }
       if (inlineSearch.hasInlineSearchQuery()) {
         inlineSearch.applyInlineSearchDecorations();
       }
@@ -2320,6 +2341,7 @@ onMounted(() => {
       true,
     );
     onBeforeUnmount(() => {
+      if (copyDebounceTimer) clearTimeout(copyDebounceTimer);
       d1.dispose();
       d2.dispose();
       dSel.dispose();
@@ -2560,10 +2582,6 @@ onMounted(() => {
   font-size: 2em !important;
 }
 
-:deep(.monaco-editor .txtr-md-marker) {
-  font-size: 0 !important;
-  opacity: 0 !important;
-}
 :deep(.monaco-editor .txtr-md-list-marker),
 :deep(.monaco-editor .txtr-md-list-marker-l1),
 :deep(.monaco-editor .txtr-md-list-marker-l2) {
@@ -2600,6 +2618,14 @@ onMounted(() => {
 :deep(.monaco-editor .txtr-md-italic) {
   font-style: italic !important;
 }
+:deep(.monaco-editor .txtr-md-blockquote) {
+  color: var(--secondary) !important;
+  font-style: italic !important;
+}
+:deep(.monaco-editor .txtr-md-code-block) {
+  color: var(--info) !important;
+  font-family: var(--mono-font, ui-monospace, monospace) !important;
+}
 
 :deep(.monaco-editor span:has(> .chapterTitleLine)) {
   display: inline-block;
@@ -2609,6 +2635,45 @@ onMounted(() => {
 </style>
 
 <style>
+/* Monaco Markdown custom block decorations */
+.monaco-editor .txtr-md-code-block-line {
+  background: var(--control-bg) !important;
+  left: -8px !important;
+  width: calc(100% + 16px) !important;
+}
+.monaco-editor .txtr-md-code-block-top {
+  border-top-left-radius: 8px !important;
+  border-top-right-radius: 8px !important;
+}
+.monaco-editor .txtr-md-code-block-bottom {
+  border-bottom-left-radius: 8px !important;
+  border-bottom-right-radius: 8px !important;
+}
+
+.monaco-editor .txtr-md-blockquote-line {
+  background: color-mix(in srgb, var(--accent) 8%, transparent) !important;
+  border-left: 4px solid color-mix(in srgb, var(--accent) 50%, transparent) !important;
+  left: -8px !important;
+  width: calc(100% + 16px) !important;
+}
+.monaco-editor .txtr-md-blockquote-top {
+  border-top-left-radius: 8px !important;
+  border-top-right-radius: 8px !important;
+}
+.monaco-editor .txtr-md-blockquote-bottom {
+  border-bottom-left-radius: 8px !important;
+  border-bottom-right-radius: 8px !important;
+}
+
+/* Hide markdown markers (like > and ```) only in read mode */
+.content:not(.content--readerEdit) .monaco-editor .txtr-md-marker {
+  display: none !important;
+}
+/* Show markers with opacity in edit mode so they are editable */
+.content.content--readerEdit .monaco-editor .txtr-md-marker {
+  opacity: 0.45 !important;
+}
+
 /* CSS styles for view zones */
 .readerImageViewZone {
   display: flex;

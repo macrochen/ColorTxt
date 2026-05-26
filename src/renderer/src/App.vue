@@ -83,6 +83,7 @@ import {
   defaultReaderPaletteLight,
   defaultReaderTheme,
   defaultRecentFilesHistoryLimit,
+  defaultReaderCopyOnSelect,
   mergeReaderSurfacePalette,
   overridesFromFullPalette,
   defaultRestoreSessionOnStartup,
@@ -420,6 +421,7 @@ const chapterMinCharCount = ref(defaultChapterMinCharCount);
 const monacoAdvancedWrapping = ref(defaultMonacoAdvancedWrapping);
 /** Monaco 阅读区平滑滚动（设置可关） */
 const monacoSmoothScrolling = ref(defaultMonacoSmoothScrolling);
+const readerCopyOnSelect = ref(defaultReaderCopyOnSelect);
 const readerEditShowLineNumbers = ref(defaultReaderEditShowLineNumbers);
 const readerEditMinimap = ref(defaultReaderEditMinimap);
 const editAutoRefreshChapterList = ref(defaultEditAutoRefreshChapterList);
@@ -764,6 +766,7 @@ const persistence = useAppPersistence({
   chapterMinCharCount,
   monacoAdvancedWrapping,
   monacoSmoothScrolling,
+  readerCopyOnSelect,
   readerEditShowLineNumbers,
   readerEditMinimap,
   editAutoRefreshChapterList,
@@ -1903,6 +1906,7 @@ async function applySettings(payload: SettingsApplyPayload) {
   const prevCompressBlankKeepOneBlank = compressBlankKeepOneBlank.value;
   const prevChapterMinCharCount = chapterMinCharCount.value;
   monacoSmoothScrolling.value = payload.monacoSmoothScrolling;
+  readerCopyOnSelect.value = payload.readerCopyOnSelect;
   readerEditShowLineNumbers.value = payload.readerEditShowLineNumbers;
   readerEditMinimap.value = payload.readerEditMinimap;
   editAutoRefreshChapterList.value = payload.editAutoRefreshChapterList;
@@ -2368,6 +2372,7 @@ useAppShellThemeWatch({
           :chapter-min-char-count="chapterMinCharCount"
           :monaco-advanced-wrapping="monacoAdvancedWrapping"
           :monaco-smooth-scrolling="monacoSmoothScrolling"
+          :reader-copy-on-select="readerCopyOnSelect"
           :reader-edit-show-line-numbers="readerEditShowLineNumbers"
           :reader-edit-minimap="readerEditMinimap"
           :stream-loading="loading"
@@ -2503,6 +2508,7 @@ useAppShellThemeWatch({
       :monaco-smooth-scrolling="monacoSmoothScrolling"
       :reader-edit-show-line-numbers="readerEditShowLineNumbers"
       :reader-edit-minimap="readerEditMinimap"
+      :reader-copy-on-select="readerCopyOnSelect"
       :edit-auto-refresh-chapter-list="editAutoRefreshChapterList"
       :monaco-custom-highlight="monacoCustomHighlight"
       :txtr-delimited-match-cross-line="txtrDelimitedMatchCrossLine"

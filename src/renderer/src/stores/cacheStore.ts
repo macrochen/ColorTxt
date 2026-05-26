@@ -63,6 +63,8 @@ export type PersistedSettingsData = {
   readerEditShowLineNumbers?: boolean;
   /** 编辑模式下是否显示小地图 */
   readerEditMinimap?: boolean;
+  /** 阅读时是否自动复制选中文字 */
+  readerCopyOnSelect?: boolean;
   /** 编辑模式下内容变更时是否自动刷新侧栏章节列表（超过行数上限时需手动刷新） */
   editAutoRefreshChapterList?: boolean;
   /** 全屏时阅读区宽度（百分比） */
@@ -242,6 +244,9 @@ export function loadPersistedSettingsData(
   }
   if (typeof obj.readerEditMinimap === "boolean") {
     data.readerEditMinimap = obj.readerEditMinimap;
+  }
+  if (typeof obj.readerCopyOnSelect === "boolean") {
+    data.readerCopyOnSelect = obj.readerCopyOnSelect;
   }
   if (typeof obj.editAutoRefreshChapterList === "boolean") {
     data.editAutoRefreshChapterList = obj.editAutoRefreshChapterList;

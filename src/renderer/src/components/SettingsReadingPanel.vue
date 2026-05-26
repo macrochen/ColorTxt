@@ -20,6 +20,7 @@ const props = defineProps<{
   draftTxtrDelimitedMatchCrossLine: boolean;
   draftFullscreenReaderWidthPercent: number;
   monacoCustomHighlight: boolean;
+  draftReaderCopyOnSelect: boolean;
 }>();
 
 defineEmits<{
@@ -29,6 +30,7 @@ defineEmits<{
   "update:draftCompressBlankKeepOneBlank": [v: boolean];
   "update:draftTxtrDelimitedMatchCrossLine": [v: boolean];
   "update:draftFullscreenReaderWidthPercent": [v: number];
+  "update:draftReaderCopyOnSelect": [v: boolean];
 }>();
 
 const draftMaxLineHeightMultiple = computed(() =>
@@ -115,6 +117,20 @@ const draftMaxLineHeightMultiple = computed(() =>
         />
       </div>
       <p class="settingsHint">关闭后，阅读区滚动不再使用平滑动画。</p>
+    </div>
+
+    <div class="settingsRow">
+      <div class="settingsRowMain">
+        <span class="settingsLabel">选中即复制</span>
+        <SwitchToggle
+          :model-value="draftReaderCopyOnSelect"
+          aria-label="选中即复制"
+          @update:model-value="
+            $emit('update:draftReaderCopyOnSelect', $event)
+          "
+        />
+      </div>
+      <p class="settingsHint">开启后，在阅读区选中文本会自动复制到剪贴板。</p>
     </div>
 
     <div class="settingsRow">

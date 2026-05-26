@@ -117,12 +117,22 @@ function onClick(e: MouseEvent) {
   margin-bottom: 0;
 }
 
+.aiMarkdown :deep(blockquote) {
+  margin: 0.6em 0;
+  padding: 0.4em 1em;
+  color: var(--secondary);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 2px 4px 4px 2px;
+}
+
 .aiMarkdown :deep(pre) {
   overflow: auto;
-  padding: 8px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  padding: 12px;
   border-radius: 6px;
-  background: var(--reader-bg, var(--bg));
-  border: 1px solid var(--border);
+  background: var(--control-bg, var(--bg));
 }
 
 .aiMarkdown :deep(code) {

@@ -331,5 +331,107 @@ export function buildMarkdownDecorations(
     decorations.push({ range: endRange, options: { inlineClassName: "txtr-md-marker" } });
   }
 
+  const blockquoteMatches = model.findMatches("^\\s*>\\s*(.*)$", false, true, false, null, true);
+  const blockquoteLineNumbers = new Set(blockquoteMatches.map(m => m.range.startLineNumber));
+
+  for (const match of blockquoteMatches) {
+    const text = model.getValueInRange(match.range);
+    const markerMatch = text.match(/^(\s*>\s*)/);
+    if (markerMatch) {
+      const markerLen = markerMatch[1].length;
+      const lineNumber = match.range.startLineNumber;
+      
+      const markerRange = new monacoApi.Range(
+        lineNumber,
+        match.range.startColumn,
+        lineNumber,
+        match.range.startColumn + markerLen
+      );
+      decorations.push({ range: markerRange, options: { inlineClassName: "txtr-md-marker" } });
+      
+      const textRange = new monacoApi.Range(
+        lineNumber,
+        match.range.startColumn + markerLen,
+        lineNumber,
+        match.range.endColumn
+      );
+      if (!textRange.isEmpty()) {
+        decorations.push({ range: textRange, options: { inlineClassName: "txtr-md-blockquote" } });
+      }
+
+      const isTop = !blockquoteLineNumbers.has(lineNumber - 1);
+      const isBottom = !blockquoteLineNumbers.has(lineNumber + 1);
+      
+      let classNames = "txtr-md-blockquote-line";
+      if (isTop) classNames += " txtr-md-blockquote-top";
+      if (isBottom) classNames += " txtr-md-blockquote-bottom";
+
+      decorations.push({
+        range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
+        options: {
+          isWholeLine: true,
+          className: classNames
+        }
+      });
+    }
+  }
+
+  const inlineCodeMatches = model.findMatches("`([^`]+)`", false, true, false, null, true);
+  for (const match of inlineCodeMatches) {
+    const text = model.getValueInRange(match.range);
+    if (text.startsWith("```") || text.endsWith("```")) continue;
+
+    const startRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn, match.range.startLineNumber, match.range.startColumn + 1);
+    const textRange = new monacoApi.Range(match.range.startLineNumber, match.range.startColumn + 1, match.range.endLineNumber, match.range.endColumn - 1);
+    const endRange = new monacoApi.Range(match.range.endLineNumber, match.range.endColumn - 1, match.range.endLineNumber, match.range.endColumn);
+    
+    decorations.push({ range: startRange, options: { inlineClassName: "txtr-md-marker" } });
+    decorations.push({ range: textRange, options: { inlineClassName: "txtr-md-code-block" } });
+    decorations.push({ range: endRange, options: { inlineClassName: "txtr-md-marker" } });
+  }
+
+  const codeBlockMarkers = model.findMatches("^\\s*```", false, true, false, null, true);
+  for (let i = 0; i < codeBlockMarkers.length; i += 2) {
+    if (i + 1 < codeBlockMarkers.length) {
+      const startMatch = codeBlockMarkers[i];
+      const endMatch = codeBlockMarkers[i + 1];
+      const startLine = startMatch.range.startLineNumber;
+      const endLine = endMatch.range.startLineNumber;
+      
+      const startRange = new monacoApi.Range(startLine, 1, startLine, model.getLineMaxColumn(startLine));
+      const endRange = new monacoApi.Range(endLine, 1, endLine, model.getLineMaxColumn(endLine));
+      
+      decorations.push({ range: startRange, options: { inlineClassName: "txtr-md-marker" } });
+      decorations.push({ range: endRange, options: { inlineClassName: "txtr-md-marker" } });
+      
+      if (endLine > startLine + 1) {
+        const textRange = new monacoApi.Range(
+          startLine + 1,
+          1,
+          endLine - 1,
+          model.getLineMaxColumn(endLine - 1)
+        );
+        decorations.push({ range: textRange, options: { inlineClassName: "txtr-md-code-block" } });
+      }
+
+      for (let line = startLine; line <= endLine; line++) {
+        const isTop = line === startLine;
+        const isBottom = line === endLine;
+        
+        let classNames = "txtr-md-code-block-line";
+        if (isTop) classNames += " txtr-md-code-block-top";
+        if (isBottom) classNames += " txtr-md-code-block-bottom";
+
+        decorations.push({
+          range: new monacoApi.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: classNames
+          }
+        });
+      }
+    }
+  }
+
   return decorations;
 }

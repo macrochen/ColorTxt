@@ -529,12 +529,13 @@ export function useAppFileSession(deps: {
         return;
       }
       if (!result.ok) return;
-      const knownPaths = new Set(deps.txtFiles.value.map((f) => f.path));
-      const newPaths = result.files
-        .map((f) => f.path)
-        .filter((path) => !knownPaths.has(path));
+      
+      // 每次在选择新目录时，先清空已有的列表
+      deps.txtFiles.value = [];
+      
+      const newPaths = result.files.map((f) => f.path);
       deps.txtFiles.value = mergeTxtFileLists(
-        deps.txtFiles.value,
+        [],
         result.files,
       );
       deps.applyCurrentFileCategoryIfConcrete?.(newPaths);
