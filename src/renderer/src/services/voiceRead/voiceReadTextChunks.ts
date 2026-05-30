@@ -8,6 +8,8 @@
 export function stripVoiceReadMarkdown(text: string): string {
   let stripped = text.replace(/\*\*([^*]+)\*\*/g, "$1");
   stripped = stripped.replace(/\*([^*]+)\*/g, "$1");
+  // 清除 Markdown 链接及其 URL，只保留链接文字，兼容带转义符的格式：\[文字\]\(链接\)
+  stripped = stripped.replace(/(?:\\)?\[(.*?)(?:\\)?\](?:\\)?\((.*?)(?:\\)?\)/g, "$1");
   return stripped;
 }
 

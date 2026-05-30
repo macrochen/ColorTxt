@@ -21,6 +21,7 @@ import {
   buildMarkdownDecorations, // forced HMR comment
   getReaderMinimapCursorLineDecorColor,
   setReaderSyntaxHighlightEnabled,
+  type MarkdownLinkHit,
 } from "../monaco/readerInlineDecorations";
 import { useReaderInlineSearch } from "../composables/useReaderInlineSearch";
 import {
@@ -156,6 +157,7 @@ const ebookLeadingLinkLabelsByDisplayLine = shallowRef<
 >(new Map());
 type EbookLinkHit = { range: monaco.Range; targetId: string };
 const ebookInternalLinkHits = shallowRef<EbookLinkHit[]>([]);
+const markdownLinkHits = shallowRef<MarkdownLinkHit[]>([]);
 /** 选区靠近阅读区上缘时为 true：笔尖与色盘改为在选区下方展开 */
 const hlFloatOpenDownward = ref(false);
 
@@ -1023,6 +1025,24 @@ function tryJumpEbookInternalLinkFromPoint(
   return false;
 }
 
+function tryJumpMarkdownLinkFromPoint(
+  clientX: number,
+  clientY: number,
+): boolean {
+  const ed = editor.value;
+  const m = model.value;
+  if (!ed || !m || markdownLinkHits.value.length === 0) return false;
+  const pos = positionFromClientPoint(ed, clientX, clientY);
+  if (!pos) return false;
+  for (const h of markdownLinkHits.value) {
+    if (!h.range.containsPosition(pos)) continue;
+    if (!clientXWithinSingleLineModelRange(ed, m, h.range, clientX)) continue;
+    window.open(h.url, "_blank");
+    return true;
+  }
+  return false;
+}
+
 /**
  * 在插图 Zone 处理之后调用：去掉 `<<ID:…>>`、将 `<<A:…|…>>` 换为可见文案并加下划线。
  * 内链装饰范围用 strip 给出的**显示行**（与 Monaco 行号一致）；跳转目标 id 在压缩空行时已映为源物理行，点击时用 `ebookAnchorPhysicalToDisplay` 再映回显示行。
@@ -1196,7 +1216,9 @@ function clear(opts?: ReaderClearOptions) {
     // Update markdown decorations whenever content changes
     next.onDidChangeContent(() => {
       window.requestAnimationFrame(() => {
-        markdownDecorationsCollection.value?.set(buildMarkdownDecorations(monaco, next));
+        const hits: MarkdownLinkHit[] = [];
+        markdownDecorationsCollection.value?.set(buildMarkdownDecorations(monaco, next, hits));
+        markdownLinkHits.value = hits;
       });
     });
   } else {
@@ -2190,7 +2212,9 @@ onMounted(() => {
 
   m.onDidChangeContent(() => {
     window.requestAnimationFrame(() => {
-      markdownDecorationsCollection.value?.set(buildMarkdownDecorations(monaco, m));
+      const hits: MarkdownLinkHit[] = [];
+      markdownDecorationsCollection.value?.set(buildMarkdownDecorations(monaco, m, hits));
+      markdownLinkHits.value = hits;
     });
   });
 
@@ -2306,6 +2330,14 @@ onMounted(() => {
       if (
         ebookInternalLinkHits.value.length > 0 &&
         tryJumpEbookInternalLinkFromPoint(ev.clientX, ev.clientY)
+      ) {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        return;
+      }
+      if (
+        markdownLinkHits.value.length > 0 &&
+        tryJumpMarkdownLinkFromPoint(ev.clientX, ev.clientY)
       ) {
         ev.preventDefault();
         ev.stopImmediatePropagation();

@@ -269,11 +269,61 @@ export function buildChapterMinimapSectionHeaderDecorations(
     }));
 }
 
+export type MarkdownLinkHit = { range: monaco.Range; url: string };
+
 export function buildMarkdownDecorations(
   monacoApi: typeof import("monaco-editor"),
   model: monaco.editor.ITextModel,
+  outMarkdownLinkHits?: MarkdownLinkHit[],
 ): monaco.editor.IModelDeltaDecoration[] {
   const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+
+  const linkMatches = model.findMatches("(?:\\\\)?\\[(.*?)(?:\\\\)?\\](?:\\\\)?\\((.*?)(?:\\\\)?\\)", false, true, false, null, true);
+  for (const match of linkMatches) {
+    const text = model.getValueInRange(match.range);
+    const localRe = /^(?:\\)?\[(.*?)(?:\\)?\](?:\\)?\((.*?)(?:\\)?\)$/;
+    const m = localRe.exec(text);
+    if (m) {
+      const linkText = m[1];
+      const urlText = m[2];
+      
+      const startOffset = model.getOffsetAt(match.range.getStartPosition());
+      const bracketStartLen = text.startsWith('\\[') ? 2 : 1;
+      
+      const textStartPos = model.getPositionAt(startOffset + bracketStartLen);
+      const textEndPos = model.getPositionAt(startOffset + bracketStartLen + linkText.length);
+      
+      const bracketStart = new monacoApi.Range(
+        match.range.startLineNumber,
+        match.range.startColumn,
+        textStartPos.lineNumber,
+        textStartPos.column
+      );
+      const textRange = new monacoApi.Range(
+        textStartPos.lineNumber,
+        textStartPos.column,
+        textEndPos.lineNumber,
+        textEndPos.column
+      );
+      const urlRange = new monacoApi.Range(
+        textEndPos.lineNumber,
+        textEndPos.column,
+        match.range.endLineNumber,
+        match.range.endColumn
+      );
+
+      decorations.push({ range: bracketStart, options: { inlineClassName: "txtr-md-marker" } });
+      decorations.push({ range: textRange, options: { inlineClassName: "readerEbookInternalLink", hoverMessage: { value: "外部链接" } } });
+      decorations.push({ range: urlRange, options: { inlineClassName: "txtr-md-marker" } });
+      
+      if (outMarkdownLinkHits) {
+        const urlMatch = text.match(/\(([^)]+)\)$/);
+        const url = urlMatch ? urlMatch[1].trim() : "";
+        outMarkdownLinkHits.push({ range: textRange, url });
+      }
+    }
+  }
+
 
   const listMatches = model.findMatches("^\\s*[*\\-]\\s+", false, true, false, null, true);
   for (const match of listMatches) {
