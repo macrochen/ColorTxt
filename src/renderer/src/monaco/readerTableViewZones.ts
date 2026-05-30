@@ -105,10 +105,51 @@ export async function replaceTableAnchorLinesWithViewZones(
     }
   }
 
-  const edits = allDeletedLines.map((line) => ({
-    range: lineDeleteRange(monacoApi, doc, line),
-    text: "",
-  }));
+  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+  if (allDeletedLines.length > 0) {
+    let currentEnd = allDeletedLines[0];
+    let currentStart = allDeletedLines[0];
+    for (let i = 1; i < allDeletedLines.length; i++) {
+      const line = allDeletedLines[i];
+      if (line === currentStart - 1) {
+        currentStart = line;
+      } else {
+        const startLine = currentStart;
+        const endLine = currentEnd;
+        const lc = doc.getLineCount();
+        let range: monaco.Range;
+        if (endLine < lc) {
+          range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
+        } else {
+          const prev = Math.max(1, startLine - 1);
+          if (startLine === 1) {
+            range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
+          } else {
+            range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
+          }
+        }
+        edits.push({ range, text: "" });
+        currentStart = line;
+        currentEnd = line;
+      }
+    }
+    const startLine = currentStart;
+    const endLine = currentEnd;
+    const lc = doc.getLineCount();
+    let range: monaco.Range;
+    if (endLine < lc) {
+      range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
+    } else {
+      const prev = Math.max(1, startLine - 1);
+      if (startLine === 1) {
+        range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
+      } else {
+        range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
+      }
+    }
+    edits.push({ range, text: "" });
+  }
+  
   doc.applyEdits(edits);
 
   const zoneIds: string[] = [];

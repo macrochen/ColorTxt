@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   nativeTheme,
@@ -437,6 +438,24 @@ export function registerMainIpcHandlers(
       return app.getPath(name as Parameters<typeof app.getPath>[0]);
     } catch {
       return null;
+    }
+  });
+
+  ipcMain.handle("file:createTempFromClipboard", async () => {
+    const text = clipboard.readText();
+    if (!text || !text.trim()) {
+      return { ok: false, message: "剪贴板为空" };
+    }
+    const tempDir = app.getPath("temp");
+    const appTempDir = path.join(tempDir, "ColorTxt-Clipboard");
+    try {
+      await mkdir(appTempDir, { recursive: true });
+      const fileName = `剪贴板导入-${Date.now()}.md`;
+      const filePath = path.join(appTempDir, fileName);
+      await writeFile(filePath, text, "utf8");
+      return { ok: true, path: filePath };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
   });
 

@@ -69,6 +69,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   openFile: [];
+  openClipboard: [];
   changeTheme: [theme: string];
   toggleSidebar: [];
   toggleFullscreen: [];
@@ -110,9 +111,14 @@ const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
 
 <template>
   <header class="header">
-    <button class="btn primary" size="large" @click="$emit('openFile')">
-      打开文件
-    </button>
+    <div class="headerGroup">
+      <button class="btn primary" size="large" @click="$emit('openFile')">
+        打开文件
+      </button>
+      <button class="btn secondary" size="large" @click="$emit('openClipboard')" title="从剪贴板导入文本并作为新文件打开">
+        剪贴板导入
+      </button>
+    </div>
     <IconButton
       :icon-html="icons.edit"
       :active="readerEditMode"
@@ -336,6 +342,13 @@ const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
   white-space: nowrap;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+.headerGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .headerQuickRow {

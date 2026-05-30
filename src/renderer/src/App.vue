@@ -1149,6 +1149,7 @@ const {
   removeFileList,
   closeCurrentFile,
   openFileViaDialog,
+  openFileFromClipboard,
   openFileFromSidebar,
   pickTxtDirectory,
   importPathsIntoFileList,
@@ -2173,6 +2174,7 @@ useAppShellThemeWatch({
         :can-enter-reader-edit-mode="canEnterReaderEditMode"
         :shortcut-bindings="shortcutBindings"
         @open-file="openFileViaDialog"
+        @open-clipboard="openFileFromClipboard"
         @pin-click="onPinClick"
         @bookmark-click="onBookmarkClick"
         @go-back-from-pin="onGoBackFromPin"

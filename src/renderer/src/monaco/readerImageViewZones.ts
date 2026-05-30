@@ -127,13 +127,50 @@ export async function replaceImgAnchorLinesWithViewZones(
     });
   }
 
-  const edits = matches
-    .slice()
-    .sort((a, b) => b.line - a.line)
-    .map((m) => ({
-      range: lineDeleteRange(monacoApi, doc, m.line),
-      text: "",
-    }));
+  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+  if (deletedOriginalLineNumbersDesc.length > 0) {
+    let currentEnd = deletedOriginalLineNumbersDesc[0];
+    let currentStart = deletedOriginalLineNumbersDesc[0];
+    for (let i = 1; i < deletedOriginalLineNumbersDesc.length; i++) {
+      const line = deletedOriginalLineNumbersDesc[i];
+      if (line === currentStart - 1) {
+        currentStart = line;
+      } else {
+        const startLine = currentStart;
+        const endLine = currentEnd;
+        const lc = doc.getLineCount();
+        let range: monaco.Range;
+        if (endLine < lc) {
+          range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
+        } else {
+          const prev = Math.max(1, startLine - 1);
+          if (startLine === 1) {
+            range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
+          } else {
+            range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
+          }
+        }
+        edits.push({ range, text: "" });
+        currentStart = line;
+        currentEnd = line;
+      }
+    }
+    const startLine = currentStart;
+    const endLine = currentEnd;
+    const lc = doc.getLineCount();
+    let range: monaco.Range;
+    if (endLine < lc) {
+      range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
+    } else {
+      const prev = Math.max(1, startLine - 1);
+      if (startLine === 1) {
+        range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
+      } else {
+        range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
+      }
+    }
+    edits.push({ range, text: "" });
+  }
   doc.applyEdits(edits);
 
   const withUrls = await Promise.all(

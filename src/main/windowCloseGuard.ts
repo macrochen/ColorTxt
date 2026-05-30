@@ -27,7 +27,11 @@ export function attachWindowCloseRequestGuard(win: BrowserWindow) {
     }
     e.preventDefault();
     if (!win.webContents.isDestroyed()) {
-      win.webContents.send("window:requestClose");
+      try {
+        win.webContents.send("window:requestClose");
+      } catch (e) {
+        // Ignore errors if the webContents is already destroyed
+      }
     }
   });
 }

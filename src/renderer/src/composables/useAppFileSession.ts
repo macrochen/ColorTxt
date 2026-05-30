@@ -500,6 +500,20 @@ export function useAppFileSession(deps: {
     await openFilePath(filePath);
   }
 
+  async function openFileFromClipboard() {
+    const res = await window.colorTxt.createTempFromClipboard();
+    if (res.ok) {
+      await openFilePath(res.path);
+    } else {
+      await window.colorTxt.showMessageBox({
+        type: "warning",
+        title: "无法从剪贴板导入",
+        message: res.message || "剪贴板可能为空或不包含文本内容。",
+        buttons: ["确定"],
+      });
+    }
+  }
+
   function openFileFromSidebar(item: TxtFileItem) {
     suppressFileListCenterAfterLoad.value = true;
     void openFilePath(item.path, { keepSidebarTab: true, listRow: item });
@@ -769,6 +783,7 @@ export function useAppFileSession(deps: {
     tryRestoreSession,
     resetSession,
     openFileViaDialog,
+    openFileFromClipboard,
     openFileFromSidebar,
     subscribeDirListTxtScan,
     pickTxtDirectory,
