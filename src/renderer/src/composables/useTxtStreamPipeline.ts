@@ -26,6 +26,7 @@ export function useTxtStreamPipeline(deps: {
   compressBlankLines: Ref<boolean>;
   compressBlankKeepOneBlank: Ref<boolean>;
   leadIndentFullWidth: Ref<boolean>;
+  traditionalToSimplified: Ref<boolean>;
   chapterMinCharCount: Ref<number>;
   currentFileIsMarkdown: Ref<boolean>;
   /** 展示正文写入 Monaco 且插图/内链处理完成后 */
@@ -215,6 +216,7 @@ export function useTxtStreamPipeline(deps: {
       compressBlankLines: deps.compressBlankLines.value,
       compressBlankKeepOneBlank: deps.compressBlankKeepOneBlank.value,
       leadIndentFullWidth: deps.leadIndentFullWidth.value,
+      traditionalToSimplified: deps.traditionalToSimplified.value,
       minCharCount: deps.chapterMinCharCount.value,
       isMarkdown: deps.currentFileIsMarkdown.value,
     });

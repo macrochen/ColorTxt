@@ -11,6 +11,15 @@ import {
 import { createMarkdownBlockContextTracker } from "../markdown/markdownBlockContext";
 import { isBlankPhysicalLineContent } from "./lineMapping";
 import { countCharsForLine } from "../utils/format";
+import * as OpenCC from "opencc-js";
+
+let _t2sConverter: ((text: string) => string) | null = null;
+function getT2SConverter() {
+  if (!_t2sConverter) {
+    _t2sConverter = OpenCC.Converter({ from: "t", to: "cn" });
+  }
+  return _t2sConverter;
+}
 
 export type ReaderDisplayFormatOptions = {
   compressBlankLines: boolean;
@@ -25,6 +34,8 @@ export type ReaderDisplayFormatOptions = {
    * 只读展示仍为去掉 `#` 的标题正文。
    */
   preserveMarkdownSourceLines?: boolean;
+  /** 是否启用繁简转换 */
+  traditionalToSimplified?: boolean;
 };
 
 export type ReaderDisplayFormatResult = {
@@ -75,13 +86,16 @@ function resolvePhysicalLineDisplay(
   } else {
     isChapterTitleLine = detectChapterTitle(rawLine) != null;
   }
-  const shown = lineForReaderDisplay(
+  let shown = lineForReaderDisplay(
     content,
     options.leadIndentFullWidth,
     qualifiedChapterTitles,
     physicalLine,
     isChapterTitleLine,
   );
+  if (options.traditionalToSimplified) {
+    shown = getT2SConverter()(shown);
+  }
   return { shown, isChapterTitleLine };
 }
 

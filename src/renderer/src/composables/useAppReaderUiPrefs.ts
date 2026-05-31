@@ -21,6 +21,7 @@ export function useAppReaderUiPrefs(deps: {
   monacoAdvancedWrapping: Ref<boolean>;
   compressBlankLines: Ref<boolean>;
   leadIndentFullWidth: Ref<boolean>;
+  traditionalToSimplified: Ref<boolean>;
   withChapterListScrollSuppressed: <T>(fn: () => Promise<T> | T) => Promise<T>;
   currentFile: Ref<string | null>;
   stream: Stream;
@@ -171,6 +172,18 @@ export function useAppReaderUiPrefs(deps: {
     );
   }
 
+  async function toggleTraditionalToSimplified() {
+    const next = !deps.traditionalToSimplified.value;
+    await applyDisplayToggleFromPhysical(
+      () => {
+        deps.traditionalToSimplified.value = next;
+      },
+      () => {
+        deps.traditionalToSimplified.value = !next;
+      },
+    );
+  }
+
   function toggleReaderFind() {
     if (deps.isVoiceReadBlocksFind?.value) return;
     deps.readerRef.value?.toggleFindWidget?.();
@@ -193,6 +206,7 @@ export function useAppReaderUiPrefs(deps: {
     toggleMonacoAdvancedWrapping,
     toggleCompressBlankLines,
     toggleLeadIndentFullWidth,
+    toggleTraditionalToSimplified,
     toggleReaderFind,
     onToggleFind,
   };

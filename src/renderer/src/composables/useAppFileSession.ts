@@ -501,6 +501,41 @@ export function useAppFileSession(deps: {
   }
 
   async function openFileFromClipboard() {
+    if (!window.colorTxt) return;
+    
+    let text = "";
+    if (typeof window.colorTxt.readClipboardText === "function") {
+      try {
+        text = await window.colorTxt.readClipboardText();
+      } catch (e) {
+        console.error("readClipboardText error:", e);
+      }
+    }
+
+    if (text) {
+      let pathCandidate = text.trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+      if (pathCandidate.startsWith("file://")) {
+        try {
+          pathCandidate = decodeURIComponent(pathCandidate.slice(7));
+        } catch {
+          // ignore malformed URI
+        }
+      }
+      // 防御性检查：如果是极长文本（如整篇文章）或多行文本，则不当作路径处理，避免 ipc 传大字符串给 stat 导致异常
+      if (pathCandidate && pathCandidate.length < 2048 && !pathCandidate.includes("\n")) {
+        let st;
+        try {
+          st = await window.colorTxt.stat(pathCandidate);
+        } catch {
+          st = null;
+        }
+        if (st && st.isFile) {
+          await openFilePath(pathCandidate);
+          return;
+        }
+      }
+    }
+
     const res = await window.colorTxt.createTempFromClipboard();
     if (res.ok) {
       await openFilePath(res.path);

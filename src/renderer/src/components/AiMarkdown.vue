@@ -109,6 +109,10 @@ function onClick(e: MouseEvent) {
   padding-left: 20px;
 }
 
+.aiMarkdown :deep(li)::marker {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
 .aiMarkdown :deep(p) {
   margin: 0 0 0.6em;
 }

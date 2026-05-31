@@ -483,5 +483,28 @@ export function buildMarkdownDecorations(
     }
   }
 
+  const hrMatches = model.findMatches("^\\s*([-*_])(?:\\s*\\1){2,}\\s*$", false, true, false, null, true);
+  for (const match of hrMatches) {
+    const lineNumber = match.range.startLineNumber;
+    
+    decorations.push({
+      range: new monacoApi.Range(
+        lineNumber,
+        1,
+        lineNumber,
+        model.getLineMaxColumn(lineNumber)
+      ),
+      options: { inlineClassName: "txtr-md-marker" }
+    });
+
+    decorations.push({
+      range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
+      options: {
+        isWholeLine: true,
+        className: "txtr-md-hr-line"
+      }
+    });
+  }
+
   return decorations;
 }

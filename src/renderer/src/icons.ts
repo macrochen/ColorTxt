@@ -64,6 +64,7 @@ import genderMaleIcon from "./assets/male.svg?raw";
 import genderFemaleIcon from "./assets/female.svg?raw";
 import genderUnknownIcon from "./assets/unknown.svg?raw";
 import warningIcon from "./assets/warning.svg?raw";
+import t2sIcon from "./assets/t2s.svg?raw";
 
 export const icons = {
   dark: darkIcon,
@@ -135,4 +136,5 @@ export const icons = {
   genderUnknown: genderUnknownIcon,
   /** 阅读助手「用户取消」、角色卡检索提示等 */
   warning: warningIcon,
+  t2s: t2sIcon,
 } as const;

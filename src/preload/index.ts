@@ -222,6 +222,8 @@ const api = {
     }>,
   emptyDir: (dirPath: string) =>
     ipcRenderer.invoke("fs:emptyDir", dirPath) as Promise<{ ok: true }>,
+  readClipboardText: () =>
+    ipcRenderer.invoke("app:readClipboardText") as Promise<string>,
   createTempFromClipboard: () =>
     ipcRenderer.invoke("file:createTempFromClipboard") as Promise<
       { ok: true; path: string } | { ok: false; message: string }

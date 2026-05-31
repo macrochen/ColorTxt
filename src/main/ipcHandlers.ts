@@ -441,6 +441,10 @@ export function registerMainIpcHandlers(
     }
   });
 
+  ipcMain.handle("app:readClipboardText", () => {
+    return clipboard.readText();
+  });
+
   ipcMain.handle("file:createTempFromClipboard", async () => {
     const text = clipboard.readText();
     if (!text || !text.trim()) {

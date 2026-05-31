@@ -9,6 +9,7 @@ import {
   nextTick,
 } from "vue";
 import * as monaco from "monaco-editor";
+import * as OpenCC from "opencc-js";
 import kingHwaFontUrl from "../assets/KingHwa_OldSong1.0.ttf?url";
 import {
   type ChapterStickyLine,
@@ -527,6 +528,13 @@ async function applyEditFormatLeadIndentFullWidth(): Promise<boolean> {
       readerFormatOptions({ leadIndentFullWidth: true }),
     ),
   );
+}
+
+async function applyEditFormatTraditionalToSimplified(): Promise<boolean> {
+  return applyEditFormat((plain) => {
+    const converter = OpenCC.Converter({ from: "t", to: "cn" });
+    return { text: converter(plain) };
+  });
 }
 
 const HL_TIP_H = 36;
@@ -2109,6 +2117,7 @@ defineExpose({
   getAllText,
   applyEditFormatCompressBlankLines,
   applyEditFormatLeadIndentFullWidth,
+  applyEditFormatTraditionalToSimplified,
   markReaderEditSaved,
   sealReaderEditBaseline,
   getEditorLineContent,
@@ -2262,6 +2271,31 @@ onMounted(() => {
     });
     let copyDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     let lastCopiedText = "";
+    let isSelectingWithPointer = false;
+
+    const onPointerDownCopyTrack = () => {
+      isSelectingWithPointer = true;
+    };
+    const triggerCopyIfSelected = () => {
+      if (!props.readerCopyOnSelect || props.readerEditMode) return;
+      const sel = e.getSelection();
+      const m = model.value;
+      if (sel && m && !sel.isEmpty()) {
+        const text = m.getValueInRange(sel);
+        if (text && text !== lastCopiedText) {
+          void navigator.clipboard.writeText(text);
+          lastCopiedText = text;
+          appToast("已复制到剪贴板", { kind: "success", duration: 2000 });
+        }
+      }
+    };
+    const onPointerUpCopyTrack = () => {
+      isSelectingWithPointer = false;
+      triggerCopyIfSelected();
+    };
+    document.addEventListener("pointerdown", onPointerDownCopyTrack, true);
+    document.addEventListener("pointerup", onPointerUpCopyTrack, true);
+    document.addEventListener("pointercancel", onPointerUpCopyTrack, true);
 
     const dSel = e.onDidChangeCursorSelection(() => {
       if (Date.now() < suppressHighlightTipUntilMs) {
@@ -2271,18 +2305,11 @@ onMounted(() => {
       void nextTick(() => updateHighlightTipFromSelection());
       if (props.readerCopyOnSelect && !props.readerEditMode) {
         if (copyDebounceTimer) clearTimeout(copyDebounceTimer);
-        copyDebounceTimer = setTimeout(() => {
-          const sel = e.getSelection();
-          const m = model.value;
-          if (sel && m && !sel.isEmpty()) {
-            const text = m.getValueInRange(sel);
-            if (text && text !== lastCopiedText) {
-              void navigator.clipboard.writeText(text);
-              lastCopiedText = text;
-              appToast("已复制到剪贴板", { kind: "success", duration: 2000 });
-            }
-          }
-        }, 500);
+        if (!isSelectingWithPointer) {
+          copyDebounceTimer = setTimeout(() => {
+            triggerCopyIfSelected();
+          }, 500);
+        }
       }
       if (inlineSearch.hasInlineSearchQuery()) {
         inlineSearch.applyInlineSearchDecorations();
@@ -2373,6 +2400,9 @@ onMounted(() => {
       true,
     );
     onBeforeUnmount(() => {
+      document.removeEventListener("pointerdown", onPointerDownCopyTrack, true);
+      document.removeEventListener("pointerup", onPointerUpCopyTrack, true);
+      document.removeEventListener("pointercancel", onPointerUpCopyTrack, true);
       if (copyDebounceTimer) clearTimeout(copyDebounceTimer);
       d1.dispose();
       d2.dispose();
@@ -2625,24 +2655,30 @@ onMounted(() => {
   visibility: visible !important;
   position: absolute !important;
   left: 0 !important;
-  top: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
   pointer-events: none !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
 }
 :deep(.monaco-editor .txtr-md-list-marker-l1::after) {
   content: "◦" !important;
   visibility: visible !important;
   position: absolute !important;
   left: 0 !important;
-  top: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
   pointer-events: none !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
 }
 :deep(.monaco-editor .txtr-md-list-marker-l2::after) {
   content: "▪" !important;
   visibility: visible !important;
   position: absolute !important;
   left: 0 !important;
-  top: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
   pointer-events: none !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
 }
 :deep(.monaco-editor .txtr-md-bold) {
   font-weight: bold !important;
@@ -2695,6 +2731,20 @@ onMounted(() => {
 .monaco-editor .txtr-md-blockquote-bottom {
   border-bottom-left-radius: 8px !important;
   border-bottom-right-radius: 8px !important;
+}
+
+.monaco-editor .txtr-md-hr-line {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    transparent calc(50% - 1px),
+    color-mix(in srgb, var(--fg) 20%, transparent) calc(50% - 1px),
+    color-mix(in srgb, var(--fg) 20%, transparent) calc(50% + 1px),
+    transparent calc(50% + 1px),
+    transparent 100%
+  ) !important;
+  left: -8px !important;
+  width: calc(100% + 16px) !important;
 }
 
 /* Hide markdown markers (like > and ```) only in read mode */

@@ -91,6 +91,7 @@ import {
   defaultTxtrDelimitedMatchCrossLine,
   defaultShowChapterCounts,
   defaultShowSidebar,
+  defaultTraditionalToSimplified,
   emptyFileHintText,
   readerTxtLoadingHintText,
   GITHUB_REPO_URL,
@@ -399,6 +400,7 @@ const compressBlankKeepOneBlank = ref(defaultCompressBlankKeepOneBlank);
 const txtrDelimitedMatchCrossLine = ref(defaultTxtrDelimitedMatchCrossLine);
 /** 为 true 时正文行统一行首两个全角空格（章节标题行与空行除外） */
 const leadIndentFullWidth = ref(defaultLeadIndentFullWidth);
+const traditionalToSimplified = ref(defaultTraditionalToSimplified);
 const readerFontSize = ref(defaultReaderFontSize);
 const readerLineHeightMultiple = ref(defaultReaderLineHeightMultiple);
 const monacoFontFamily = ref(READER_EDITOR_DEFAULT_FONT_FAMILY);
@@ -703,6 +705,7 @@ const stream = useTxtStreamPipeline({
   compressBlankLines,
   compressBlankKeepOneBlank,
   leadIndentFullWidth,
+  traditionalToSimplified,
   chapterMinCharCount,
   currentFileIsMarkdown,
   afterFullTextInstalled: () => afterStreamFullTextInstalled(),
@@ -1401,6 +1404,12 @@ function onFormatEditLeadIndentFullWidth() {
   );
 }
 
+function onFormatEditTraditionalToSimplified() {
+  void runEditFormatWithChapterSync(() =>
+    readerRef.value?.applyEditFormatTraditionalToSimplified?.(),
+  );
+}
+
 async function onFooterSaveFileAsEncoding(codec: "utf8" | "gb2312") {
   void (await saveReaderBufferWithIpcEncoding(codec));
 }
@@ -1488,6 +1497,7 @@ const readerUi = useAppReaderUiPrefs({
   monacoAdvancedWrapping,
   compressBlankLines,
   leadIndentFullWidth,
+  traditionalToSimplified,
   withChapterListScrollSuppressed,
   currentFile,
   stream,
@@ -1515,6 +1525,7 @@ const {
   toggleMonacoAdvancedWrapping,
   toggleCompressBlankLines,
   toggleLeadIndentFullWidth,
+  toggleTraditionalToSimplified,
   onToggleFind,
 } = readerUi;
 
@@ -2170,6 +2181,7 @@ useAppShellThemeWatch({
         :monaco-custom-highlight="monacoCustomHighlight"
         :compress-blank-lines="compressBlankLines"
         :lead-indent-full-width="leadIndentFullWidth"
+        :traditional-to-simplified="traditionalToSimplified"
         :reader-edit-mode="readerEditMode"
         :can-enter-reader-edit-mode="canEnterReaderEditMode"
         :shortcut-bindings="shortcutBindings"
@@ -2190,8 +2202,10 @@ useAppShellThemeWatch({
         @toggle-monaco-custom-highlight="toggleMonacoCustomHighlight"
         @toggle-compress-blank-lines="toggleCompressBlankLines"
         @toggle-lead-indent-full-width="toggleLeadIndentFullWidth"
+        @toggle-traditional-to-simplified="toggleTraditionalToSimplified"
         @format-edit-compress-blank-lines="onFormatEditCompressBlankLines"
         @format-edit-lead-indent-full-width="onFormatEditLeadIndentFullWidth"
+        @format-edit-traditional-to-simplified="onFormatEditTraditionalToSimplified"
         @toggle-find="onToggleFind"
         :chapter-rules-disabled="currentFileIsMarkdown"
         @open-chapter-rules="

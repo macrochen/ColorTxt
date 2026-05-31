@@ -27,6 +27,8 @@ const props = withDefaults(
     compressBlankLines: boolean;
     /** 是否将正文行首统一为两个全角空格（章节标题与空行除外） */
     leadIndentFullWidth: boolean;
+    /** 是否繁简转换 */
+    traditionalToSimplified: boolean;
     /** 当前是否处于全屏阅读（全屏浮动顶栏为 true，用于全屏按钮图标与提示） */
     inFullscreen?: boolean;
     /** 最近打开的文件（含阅读进度），最多 20 条 */
@@ -80,10 +82,13 @@ const emit = defineEmits<{
   decreaseLineHeight: [];
   toggleCompressBlankLines: [];
   toggleLeadIndentFullWidth: [];
+  toggleTraditionalToSimplified: [];
   /** 编辑模式：对当前全文执行压缩空行 */
   formatEditCompressBlankLines: [];
   /** 编辑模式：对当前全文执行行首缩进 */
   formatEditLeadIndentFullWidth: [];
+  /** 编辑模式：繁转简 */
+  formatEditTraditionalToSimplified: [];
   toggleMonacoAdvancedWrapping: [];
   toggleMonacoCustomHighlight: [];
   toggleFind: [];
@@ -229,6 +234,15 @@ const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
             :disabled="vrFormatLock"
             @click="emit('toggleLeadIndentFullWidth')"
           />
+          <IconButton
+            :icon-html="icons.t2s"
+            :active="traditionalToSimplified"
+            :pressed="traditionalToSimplified"
+            title="繁转简"
+            aria-label="繁转简"
+            :disabled="vrFormatLock"
+            @click="emit('toggleTraditionalToSimplified')"
+          />
         </template>
         <template v-else>
           <IconButton
@@ -244,6 +258,13 @@ const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
             aria-label="格式化：行首缩进"
             :disabled="vrFormatLock"
             @click="emit('formatEditLeadIndentFullWidth')"
+          />
+          <IconButton
+            :icon-html="icons.t2s"
+            title="繁简转换：一键将当前全文繁体转换为简体"
+            aria-label="繁转简"
+            :disabled="vrFormatLock"
+            @click="emit('formatEditTraditionalToSimplified')"
           />
         </template>
       </div>
