@@ -1413,7 +1413,7 @@ async function onFormatEditRemoveTimeLinks() {
       readerRef.value?.applyEditFormatRemoveTimeLinks?.(),
     );
   } else {
-    const p = readerFilePath.value;
+    const p = currentFile.value;
     if (!p || !window.colorTxt?.readWholeTextFile) return;
     const r = await window.colorTxt.readWholeTextFile(p);
     if (!r.ok) return;
@@ -1481,11 +1481,30 @@ function scheduleChapterListRefreshFromEdit() {
   }, CHAPTER_REFRESH_DEBOUNCE_MS);
 }
 
+let autoSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const AUTO_SAVE_DEBOUNCE_MS = 2000;
+
+function scheduleAutoSave() {
+  if (autoSaveDebounceTimer) {
+    clearTimeout(autoSaveDebounceTimer);
+    autoSaveDebounceTimer = null;
+  }
+  autoSaveDebounceTimer = setTimeout(() => {
+    autoSaveDebounceTimer = null;
+    if (readerEditMode.value && readerEditorDirty.value) {
+      void onSaveReaderFile();
+    }
+  }, AUTO_SAVE_DEBOUNCE_MS);
+}
+
 function onReaderEditContentChange() {
   stream.resyncMirrorFromReader();
   scheduleChapterListRefreshFromEdit();
-  if (readerEditMode.value && searchQuery.value.trim()) {
-    scheduleSidebarSearch();
+  if (readerEditMode.value) {
+    scheduleAutoSave();
+    if (searchQuery.value.trim()) {
+      scheduleSidebarSearch();
+    }
   }
 }
 

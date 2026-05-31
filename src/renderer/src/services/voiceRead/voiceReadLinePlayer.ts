@@ -1328,6 +1328,9 @@ export class VoiceReadLinePlayer {
         body: JSON.stringify({
           model: "qwen3-tts-flash",
           input: { text, voice },
+          parameters: {
+            speech_rate: settings.rate,
+          },
         }),
         signal,
       },
