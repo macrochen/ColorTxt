@@ -7,6 +7,7 @@ export const READER_TABLE_ROW_LINE_RE = /^\s*<<TABLE_ROW>>\s*$/;
 export type ReplaceTableAnchorsResult = {
   zoneIds: string[];
   deletedOriginalLineNumbersDesc: number[];
+  setHighlight: (line: number, active: boolean) => void;
 };
 
 function lineDeleteRange(
@@ -77,9 +78,7 @@ export async function replaceTableAnchorLinesWithViewZones(
   const deletedOriginalLineNumbersDesc = [...allDeletedLines];
   const tableLineSet = new Set(allDeletedLines);
 
-  function deletedBefore(row: number): number {
-    return allDeletedLines.filter((x) => x < row).length;
-  }
+
 
   function afterLineNumberForMatch(match: { line: number }): number {
     let k = match.line - 1;
@@ -87,7 +86,7 @@ export async function replaceTableAnchorLinesWithViewZones(
       k -= 1;
     }
     if (k < 1) return 0;
-    return k - deletedBefore(k);
+    return k;
   }
 
   const zoneSpecs: { afterLineNumber: number; html: string; rawMarkdown: string }[] = [];
@@ -106,54 +105,11 @@ export async function replaceTableAnchorLinesWithViewZones(
   }
 
   const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
-  if (allDeletedLines.length > 0) {
-    let currentEnd = allDeletedLines[0];
-    let currentStart = allDeletedLines[0];
-    for (let i = 1; i < allDeletedLines.length; i++) {
-      const line = allDeletedLines[i];
-      if (line === currentStart - 1) {
-        currentStart = line;
-      } else {
-        const startLine = currentStart;
-        const endLine = currentEnd;
-        const lc = doc.getLineCount();
-        let range: monaco.Range;
-        if (endLine < lc) {
-          range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
-        } else {
-          const prev = Math.max(1, startLine - 1);
-          if (startLine === 1) {
-            range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
-          } else {
-            range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
-          }
-        }
-        edits.push({ range, text: "" });
-        currentStart = line;
-        currentEnd = line;
-      }
-    }
-    const startLine = currentStart;
-    const endLine = currentEnd;
-    const lc = doc.getLineCount();
-    let range: monaco.Range;
-    if (endLine < lc) {
-      range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
-    } else {
-      const prev = Math.max(1, startLine - 1);
-      if (startLine === 1) {
-        range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
-      } else {
-        range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
-      }
-    }
-    edits.push({ range, text: "" });
-  }
-  
-  doc.applyEdits(edits);
+  // doc.applyEdits(edits);
 
   const zoneIds: string[] = [];
   let zoneOrdinal = 10000;
+  const lineDoms = new Map<number, HTMLElement>();
   
   editor.changeViewZones((accessor) => {
     for (const z of zoneSpecs) {
@@ -173,6 +129,21 @@ export async function replaceTableAnchorLinesWithViewZones(
       const wrapper = document.createElement("div");
       wrapper.className = "readerTableViewZoneWrapper";
       wrapper.innerHTML = z.html;
+      
+      const fontInfo = editor.getOptions().get(monacoApi.editor.EditorOption.fontInfo);
+      if (fontInfo) {
+        wrapper.style.fontFamily = fontInfo.fontFamily;
+        wrapper.style.fontSize = `${fontInfo.fontSize}px`;
+        wrapper.style.lineHeight = `${fontInfo.lineHeight}px`;
+        wrapper.style.fontWeight = fontInfo.fontWeight;
+        wrapper.style.color = "var(--vscode-editor-foreground)";
+      }
+      
+      // Remove hardcoded padding if it's just a math formula
+      if (!z.rawMarkdown.includes("|")) {
+        dom.style.padding = "0";
+      }
+
       dom.appendChild(wrapper);
 
       // We need to measure the height of the DOM element before adding the zone,
@@ -192,14 +163,38 @@ export async function replaceTableAnchorLinesWithViewZones(
         ordinal: zoneOrdinal++,
         heightInPx: finalHeight,
         domNode: dom,
+        showInHiddenAreas: true,
         onDomNodeTop: () => {
           syncReaderTableViewZoneBox(editor, dom);
         },
       });
       zoneIds.push(id);
+      
+      // Save the DOM so we can highlight it
+      for (const m of matches) {
+        if (afterLineNumberForMatch(m) === z.afterLineNumber) {
+          lineDoms.set(m.line, dom);
+        }
+      }
+      for (const row of rowMatches) {
+        if (afterLineNumberForMatch({ line: row }) === z.afterLineNumber) {
+          lineDoms.set(row, dom);
+        }
+      }
     }
   });
   
+  const setHighlight = (line: number, active: boolean) => {
+    const dom = lineDoms.get(line);
+    if (dom) {
+      if (active) {
+        dom.classList.add("readerVoiceReadCurrentLine");
+      } else {
+        dom.classList.remove("readerVoiceReadCurrentLine");
+      }
+    }
+  };
+  
   options.onZonesChange?.(zoneIds);
-  return { zoneIds, deletedOriginalLineNumbersDesc };
+  return { zoneIds, deletedOriginalLineNumbersDesc, setHighlight };
 }

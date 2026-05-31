@@ -1218,15 +1218,12 @@ afterStreamFullTextInstalled = async () => {
   );
   readerRef.value?.applyEbookInternalLinkMarkers?.();
   
-  if (compressBlankLines.value) {
-    const deletedLines = [
-      ...(tableAnchors?.deletedOriginalLineNumbersDesc || []),
-      ...(imgAnchors?.deletedOriginalLineNumbersDesc || [])
-    ].sort((a, b) => b - a);
-    
-    if (deletedLines.length > 0) {
-      stream.removeFilteredDisplayLinesAtOriginalIndices(deletedLines);
-    }
+  const deletedLines = [
+    ...(tableAnchors?.deletedOriginalLineNumbersDesc || []),
+    ...(imgAnchors?.deletedOriginalLineNumbersDesc || [])
+  ];
+  if (deletedLines.length > 0) {
+    readerRef.value?.setHiddenAreas?.(deletedLines);
   }
   stream.resyncMirrorFromReader();
 };
@@ -1409,6 +1406,34 @@ function onFormatEditTraditionalToSimplified() {
     readerRef.value?.applyEditFormatTraditionalToSimplified?.(),
   );
 }
+
+async function onFormatEditRemoveTimeLinks() {
+  if (readerEditMode.value) {
+    void runEditFormatWithChapterSync(() =>
+      readerRef.value?.applyEditFormatRemoveTimeLinks?.(),
+    );
+  } else {
+    const p = readerFilePath.value;
+    if (!p || !window.colorTxt?.readWholeTextFile) return;
+    const r = await window.colorTxt.readWholeTextFile(p);
+    if (!r.ok) return;
+    
+    let text = r.text.replace(/(?:\\)?\[(.*?)(?:\\)?\]\s*(?:\\)?\((.*?)(?:\\)?\)/g, (match, linkText) => {
+      if (/^\s*\d+\s*[:：]\s*\d+(?:\s*[:：]\s*\d+)?\s*$/.test(linkText)) {
+        return "";
+      }
+      return match;
+    });
+    
+    if (text !== r.text) {
+      const w = await window.colorTxt.writeTextFile(p, text, readerSaveEncoding.value);
+      if (w.ok) {
+        await reloadCurrentFileFromDisk();
+      }
+    }
+  }
+}
+
 
 async function onFooterSaveFileAsEncoding(codec: "utf8" | "gb2312") {
   void (await saveReaderBufferWithIpcEncoding(codec));
@@ -2206,6 +2231,7 @@ useAppShellThemeWatch({
         @format-edit-compress-blank-lines="onFormatEditCompressBlankLines"
         @format-edit-lead-indent-full-width="onFormatEditLeadIndentFullWidth"
         @format-edit-traditional-to-simplified="onFormatEditTraditionalToSimplified"
+        @format-edit-remove-time-links="onFormatEditRemoveTimeLinks"
         @toggle-find="onToggleFind"
         :chapter-rules-disabled="currentFileIsMarkdown"
         @open-chapter-rules="

@@ -89,6 +89,7 @@ const emit = defineEmits<{
   formatEditLeadIndentFullWidth: [];
   /** 编辑模式：繁转简 */
   formatEditTraditionalToSimplified: [];
+  formatEditRemoveTimeLinks: [];
   toggleMonacoAdvancedWrapping: [];
   toggleMonacoCustomHighlight: [];
   toggleFind: [];
@@ -243,6 +244,14 @@ const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
             :disabled="vrFormatLock"
             @click="emit('toggleTraditionalToSimplified')"
           />
+        
+          <IconButton
+            :icon-html="icons.clear"
+            title="清除时间标注：一键清除通过视频脚本转换带来的时间标注（带链接）"
+            aria-label="清除时间"
+            :disabled="vrFormatLock"
+            @click="emit('formatEditRemoveTimeLinks')"
+          />
         </template>
         <template v-else>
           <IconButton
@@ -265,6 +274,13 @@ const vrFormatLock = computed(() => props.voiceReadHeaderLocked);
             aria-label="繁转简"
             :disabled="vrFormatLock"
             @click="emit('formatEditTraditionalToSimplified')"
+          />
+          <IconButton
+            :icon-html="icons.clear"
+            title="清除时间标注：一键清除通过视频脚本转换带来的时间标注（带链接）"
+            aria-label="清除时间"
+            :disabled="vrFormatLock"
+            @click="emit('formatEditRemoveTimeLinks')"
           />
         </template>
       </div>

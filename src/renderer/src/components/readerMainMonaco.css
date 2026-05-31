@@ -43,6 +43,11 @@
   );
 }
 
+.monaco-editor .readerTableViewZoneWrapper p {
+  margin: 0;
+  padding: 0;
+}
+
 .monaco-editor .readerInlineSearchMatch {
   background: var(
     --vscode-editor-findMatchHighlightBackground,

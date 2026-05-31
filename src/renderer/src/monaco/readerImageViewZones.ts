@@ -95,9 +95,7 @@ export async function replaceImgAnchorLinesWithViewZones(
 
   const imgLineSet = new Set(matches.map((x) => x.line));
 
-  function deletedBefore(row: number): number {
-    return matches.filter((x) => x.line < row).length;
-  }
+
 
   /**
    * 删去所有 `<<IMG:…>>` 行后，View Zone 应插在该插图**上一行非插图内容**之后。
@@ -111,7 +109,7 @@ export async function replaceImgAnchorLinesWithViewZones(
       k -= 1;
     }
     if (k < 1) return 0;
-    return k - deletedBefore(k);
+    return k;
   }
 
   /** 必须在 `applyEdits` 之前算好：`getLineContent(k)` 用的是删行前的行号 */
@@ -128,50 +126,7 @@ export async function replaceImgAnchorLinesWithViewZones(
   }
 
   const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
-  if (deletedOriginalLineNumbersDesc.length > 0) {
-    let currentEnd = deletedOriginalLineNumbersDesc[0];
-    let currentStart = deletedOriginalLineNumbersDesc[0];
-    for (let i = 1; i < deletedOriginalLineNumbersDesc.length; i++) {
-      const line = deletedOriginalLineNumbersDesc[i];
-      if (line === currentStart - 1) {
-        currentStart = line;
-      } else {
-        const startLine = currentStart;
-        const endLine = currentEnd;
-        const lc = doc.getLineCount();
-        let range: monaco.Range;
-        if (endLine < lc) {
-          range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
-        } else {
-          const prev = Math.max(1, startLine - 1);
-          if (startLine === 1) {
-            range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
-          } else {
-            range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
-          }
-        }
-        edits.push({ range, text: "" });
-        currentStart = line;
-        currentEnd = line;
-      }
-    }
-    const startLine = currentStart;
-    const endLine = currentEnd;
-    const lc = doc.getLineCount();
-    let range: monaco.Range;
-    if (endLine < lc) {
-      range = new monacoApi.Range(startLine, 1, endLine + 1, 1);
-    } else {
-      const prev = Math.max(1, startLine - 1);
-      if (startLine === 1) {
-        range = new monacoApi.Range(1, 1, endLine, doc.getLineMaxColumn(endLine));
-      } else {
-        range = new monacoApi.Range(prev, doc.getLineMaxColumn(prev), endLine, doc.getLineMaxColumn(endLine));
-      }
-    }
-    edits.push({ range, text: "" });
-  }
-  doc.applyEdits(edits);
+  // doc.applyEdits(edits);
 
   const withUrls = await Promise.all(
     zoneSpecs.map(async (z) => ({
@@ -220,6 +175,7 @@ export async function replaceImgAnchorLinesWithViewZones(
         ordinal: zoneOrdinal++,
         heightInPx: options.zoneHeightPx,
         domNode: dom,
+        showInHiddenAreas: true,
         onDomNodeTop: () => {
           syncReaderImageViewZoneBox(editor, dom);
         },

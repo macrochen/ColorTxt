@@ -167,6 +167,10 @@ const voiceReadScrollLocked = computed(
 );
 
 let removeHlGlobalListeners: (() => void) | null = null;
+let imageZoneIds: string[] = [];
+let tableZoneIds: string[] = [];
+let tableZoneSetHighlight: ((line: number, active: boolean) => void) | null = null;
+let currentEbookLinkLineMapping: Map<number, { textLength: number; markers: any[] }> | null = null;
 let unsubModalStack: (() => void) | null = null;
 let removeVoiceReadKeyCapture: (() => void) | null = null;
 const builtInThemes = new Set(["vs", "vs-dark"]);
@@ -536,6 +540,19 @@ async function applyEditFormatTraditionalToSimplified(): Promise<boolean> {
     return { text: converter(plain) };
   });
 }
+
+async function applyEditFormatRemoveTimeLinks(): Promise<boolean> {
+  return applyEditFormat((plain) => {
+    let text = plain.replace(/(?:\\)?\[(.*?)(?:\\)?\]\s*(?:\\)?\((.*?)(?:\\)?\)/g, (match, linkText) => {
+      if (/^\s*\d+\s*[:：]\s*\d+(?:\s*[:：]\s*\d+)?\s*$/.test(linkText)) {
+        return "";
+      }
+      return match;
+    });
+    return { text };
+  });
+}
+
 
 const HL_TIP_H = 36;
 const HL_FLOAT_GAP = 4;
@@ -1175,12 +1192,13 @@ async function applyEmbeddedImageAnchors(
 async function applyEmbeddedTableAnchors(): Promise<ReplaceTableAnchorsResult> {
   disposeTableViewZones();
   const e = editor.value;
-  if (!e) return { zoneIds: [], deletedOriginalLineNumbersDesc: [] };
+  if (!e) return { zoneIds: [], deletedOriginalLineNumbersDesc: [], setHighlight: () => {} };
   const result = await replaceTableAnchorLinesWithViewZones(monaco, e, {
     onZonesChange: (ids) => {
       tableViewZoneIds.value = ids;
     },
   });
+  tableZoneSetHighlight = result.setHighlight;
   return result;
 }
 
@@ -1202,6 +1220,7 @@ function clear(opts?: ReaderClearOptions) {
   minimapCursorLineDecorationsCollection.value?.clear();
   chapterMinimapDecorationsCollection.value?.clear();
 
+  e?.setHiddenAreas([]);
   e?.updateOptions({ stickyScroll: { enabled: false } });
 
   if (e && prevModel) {
@@ -1596,12 +1615,19 @@ function setVoiceReadLineHighlight(lineNumber: number | null) {
   const m = model.value;
   if (!col || !m) return;
   if (lineNumber == null || !Number.isFinite(lineNumber)) {
+    if (voiceReadHighlightLine.value != null) {
+      tableZoneSetHighlight?.(voiceReadHighlightLine.value, false);
+    }
     voiceReadHighlightLine.value = null;
     col.clear();
     return;
   }
   const line = Math.max(1, Math.min(Math.floor(lineNumber), m.getLineCount()));
+  if (voiceReadHighlightLine.value != null && voiceReadHighlightLine.value !== line) {
+    tableZoneSetHighlight?.(voiceReadHighlightLine.value, false);
+  }
   voiceReadHighlightLine.value = line;
+  tableZoneSetHighlight?.(line, true);
   col.set([
     {
       range: new monaco.Range(line, 1, line, m.getLineMaxColumn(line)),
@@ -2118,6 +2144,7 @@ defineExpose({
   applyEditFormatCompressBlankLines,
   applyEditFormatLeadIndentFullWidth,
   applyEditFormatTraditionalToSimplified,
+  applyEditFormatRemoveTimeLinks,
   markReaderEditSaved,
   sealReaderEditBaseline,
   getEditorLineContent,
@@ -2142,6 +2169,14 @@ defineExpose({
   expandMarkdownImagesInModel,
   expandMarkdownTablesInModel,
   applyEmbeddedImageAnchors,
+  setHiddenAreas(lines: number[]) {
+    const e = editor.value;
+    if (!e) return;
+    const ranges = lines.map(
+      (line) => new monaco.Range(line, 1, line, 1)
+    );
+    e.setHiddenAreas(ranges);
+  },
   applyEmbeddedTableAnchors,
   applyEbookInternalLinkMarkers,
   getEbookLeadingLinkLabelsByDisplayLine,

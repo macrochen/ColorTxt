@@ -10,6 +10,7 @@ import { toVoiceReadEdgeTtsRequest } from "../../constants/voiceRead";
 import {
   hasVoiceReadSpeakableText,
   splitVoiceReadChunks,
+  stripVoiceReadMarkdown,
   VOICE_READ_CHUNK_UNITS_DEFAULT,
   VOICE_READ_CHUNK_UNITS_EDGE,
 } from "./voiceReadTextChunks";
@@ -39,7 +40,8 @@ function isDecodeAudioDataEncodingError(err: unknown): boolean {
 }
 
 function normalizeLineText(text: string): string {
-  let t = text.replace(/\s+/g, " ").trim();
+  let t = stripVoiceReadMarkdown(text);
+  t = t.replace(/\s+/g, " ").trim();
   t = t.replace(/^[*\\-]\s+/, "");
   return t;
 }
